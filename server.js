@@ -5,17 +5,13 @@ import { ChatBedrockConverse } from "@langchain/aws";
 import { ChatPromptTemplate } from "@langchain/core/prompts";
 import { tool } from "@langchain/core/tools";
 import { StateGraph, START, END, StateSchema } from "@langchain/langgraph";
+import nodemailer from "nodemailer";
 import * as z from "zod";
+import { RequestError } from "./errors.js";
+import { createReportTools } from "./report-tools.js";
 
 const MAX_BODY_BYTES = 8_192;
 const MAX_PROMPT_LENGTH = 2_000;
-
-class RequestError extends Error {
-  constructor(message, statusCode = 422) {
-    super(message);
-    this.statusCode = statusCode;
-  }
-}
 
 // Each entry is one callable arithmetic tool: description, input args, and implementation.
 export const arithmeticTools = Object.freeze({
@@ -90,11 +86,18 @@ const stepSchema = z.object({
 
 const calculatorState = new StateSchema({
   prompt: z.string(),
+  saveTextFile: z.boolean().optional(),
+  emailTo: z.string().optional(),
   expression: z.string().optional(),
   operation: operationSchema.optional(),
   result: z.number().optional(),
   steps: z.array(stepSchema).optional(),
   explanation: z.string().optional(),
+  displayText: z.string().optional(),
+  savedFile: z.string().optional(),
+  saveError: z.string().optional(),
+  emailSentTo: z.string().optional(),
+  emailError: z.string().optional(),
 });
 
 function parseModelResponse(content) {
@@ -264,7 +267,11 @@ function explainSteps({ steps, result }) {
   return `${sentences.join(" ")} The final result is ${result}.`;
 }
 
-export function createCalculatorGraph(model) {
+function reportFromState({ prompt, expression, steps, result, explanation }) {
+  return { prompt, expression, steps, result, explanation };
+}
+
+export function createCalculatorGraph(model, { reportTools = createReportTools() } = {}) {
   const chain = arithmeticPrompt.pipe(model);
   return new StateGraph(calculatorState)
     .addNode("interpret", async ({ prompt }) => {
@@ -280,10 +287,38 @@ export function createCalculatorGraph(model) {
     })
     .addNode("calculate", ({ expression }) => evaluateExpression(expression))
     .addNode("explain", ({ steps, result }) => ({ explanation: explainSteps({ steps, result }) }))
+    .addNode("display", async (state) => ({
+      displayText: await reportTools.langChainTools.display.invoke({ report: reportFromState(state) }),
+    }))
+    .addNode("saveReport", async (state) => {
+      try {
+        const savedFile = await reportTools.langChainTools.saveTextFile.invoke({ report: reportFromState(state) });
+        return { savedFile };
+      } catch {
+        return { saveError: "Could not save the report text file." };
+      }
+    })
+    .addNode("sendMail", async (state) => {
+      try {
+        const emailSentTo = await reportTools.langChainTools.sendMail.invoke({
+          report: reportFromState(state),
+          to: state.emailTo,
+        });
+        return { emailSentTo };
+      } catch (error) {
+        return { emailError: error instanceof RequestError ? error.message : "Could not send the result email." };
+      }
+    })
     .addEdge(START, "interpret")
     .addEdge("interpret", "calculate")
     .addEdge("calculate", "explain")
-    .addEdge("explain", END)
+    .addEdge("explain", "display")
+    .addConditionalEdges("display", ({ saveTextFile, emailTo }) =>
+      saveTextFile ? "saveReport" : emailTo ? "sendMail" : END,
+    ["saveReport", "sendMail", END])
+    .addConditionalEdges("saveReport", ({ emailTo }) => emailTo ? "sendMail" : END,
+      ["sendMail", END])
+    .addEdge("sendMail", END)
     .compile();
 }
 
@@ -329,14 +364,36 @@ export function createApiHandler(graph) {
       if (numericValues(body.prompt).length < 2) {
         throw new RequestError("Use DMAS operations with at least two numeric values.");
       }
+      if (body.saveTextFile !== undefined && typeof body.saveTextFile !== "boolean") {
+        throw new RequestError("saveTextFile must be true or false.", 400);
+      }
+      const emailTo = typeof body.emailTo === "string" ? body.emailTo.trim() : body.emailTo;
+      if (emailTo !== undefined && !z.email().safeParse(emailTo).success) {
+        throw new RequestError("emailTo must be a valid email address.", 400);
+      }
 
-      const result = await graph.invoke({ prompt: body.prompt.trim() });
+      const result = await graph.invoke({
+        prompt: body.prompt.trim(),
+        saveTextFile: body.saveTextFile === true,
+        emailTo,
+      });
       const responseBody = result.operation
         ? { operation: result.operation.operation, a: result.operation.a, b: result.operation.b, result: result.result }
         : { expression: result.expression, result: result.result };
       responseBody.steps = result.steps;
       responseBody.explanation = result.explanation;
-      sendJson(response, 200, responseBody);
+      responseBody.display = result.displayText;
+      if (body.saveTextFile === true) {
+        responseBody.file = result.savedFile
+          ? { status: "saved", path: result.savedFile }
+          : { status: "failed", error: result.saveError };
+      }
+      if (emailTo) {
+        responseBody.email = result.emailSentTo
+          ? { status: "sent", to: result.emailSentTo }
+          : { status: "failed", error: result.emailError };
+      }
+      sendJson(response, result.emailError ? 502 : result.saveError ? 500 : 200, responseBody);
     } catch (error) {
       if (error instanceof RequestError) {
         sendJson(response, error.statusCode, { error: error.message });
@@ -350,6 +407,30 @@ export function createApiHandler(graph) {
 
 export function createApiServer(graph) {
   return createServer(createApiHandler(graph));
+}
+
+function createConfiguredMailer() {
+  const host = process.env.SMTP_HOST?.trim();
+  const fromAddress = process.env.SMTP_FROM?.trim();
+  if (!host || !fromAddress) return {};
+
+  const port = Number(process.env.SMTP_PORT || 587);
+  if (!Number.isInteger(port) || port < 1 || port > 65_535) {
+    throw new Error("SMTP_PORT must be between 1 and 65535.");
+  }
+  const user = process.env.SMTP_USER;
+  const password = process.env.SMTP_PASSWORD;
+  if (Boolean(user) !== Boolean(password)) {
+    throw new Error("Set both SMTP_USER and SMTP_PASSWORD, or neither.");
+  }
+  const mailer = nodemailer.createTransport({
+    host,
+    port,
+    secure: process.env.SMTP_SECURE === "true" || port === 465,
+    requireTLS: port !== 465,
+    ...(user ? { auth: { user, pass: password } } : {}),
+  });
+  return { mailer, fromAddress };
 }
 
 function start() {
@@ -368,8 +449,13 @@ function start() {
     maxTokens: 256,
   });
   const port = Number(process.env.PORT || 3000);
-  createApiServer(createCalculatorGraph(model)).listen(port, () => {
-    console.log(`DMAS API listening on http://localhost:${port}`);
+  const host = process.env.HOST || "127.0.0.1";
+  const reportTools = createReportTools({
+    outputDir: process.env.REPORTS_DIR,
+    ...createConfiguredMailer(),
+  });
+  createApiServer(createCalculatorGraph(model, { reportTools })).listen(port, host, () => {
+    console.log(`DMAS API listening on http://${host}:${port}`);
   });
 }
 
