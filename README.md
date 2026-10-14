@@ -86,3 +86,4 @@ The two options can be used together. A file save error is reported in the `file
 Run `npm test` to verify calculations, graph flow, and API behavior with a mock model. The tests do not need a Bedrock key.
 
 This prototype uses the supplied model ID through Bedrock Converse. Calling an existing Bedrock Agent would require its agent ID, alias ID, and AWS credentials instead of this model configuration.
+# langchain
