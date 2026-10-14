@@ -76,9 +76,7 @@ const mockModel = RunnableLambda.from(async (messages) => {
 });
 
 const reportsDir = path.join(tmpdir(), `dmas-test-${randomUUID()}`);
-const sentMessages = [];
-const mailer = { async sendMail(message) { sentMessages.push(message); return { messageId: "test-message" }; } };
-const reportTools = createReportTools({ outputDir: reportsDir, mailer, fromAddress: "sender@example.com" });
+const reportTools = createReportTools({ outputDir: reportsDir });
 const handler = createApiHandler(createCalculatorGraph(mockModel, { reportTools }));
 after(async () => rm(reportsDir, { recursive: true, force: true }));
 
@@ -156,7 +154,6 @@ test("query API handles multi-operation requests", async () => {
 });
 
 test("report actions run only when explicitly requested", async () => {
-  assert.equal(sentMessages.length, 0);
   await assert.rejects(() => readdir(reportsDir), { code: "ENOENT" });
 
   const saved = await query({ prompt: "5 + 7", saveTextFile: true });
@@ -164,20 +161,18 @@ test("report actions run only when explicitly requested", async () => {
   assert.equal(saved.body.file.status, "saved");
   assert.equal(saved.body.email, undefined);
   assert.equal(await readFile(saved.body.file.path, "utf8"), saved.body.display);
-  assert.equal(sentMessages.length, 0);
 
   const emailed = await query({ prompt: "5 + 7", emailTo: "recipient@example.com" });
   assert.equal(emailed.status, 200);
-  assert.deepEqual(emailed.body.email, { status: "sent", to: "recipient@example.com" });
+  assert.deepEqual(emailed.body.email, {
+    status: "disabled",
+    draft: { to: "recipient@example.com", subject: "DMAS calculation result", text: emailed.body.display },
+  });
   assert.equal(emailed.body.file, undefined);
-  assert.equal(sentMessages.length, 1);
-  assert.equal(sentMessages[0].text, emailed.body.display);
-  assert.equal(sentMessages[0].to, "recipient@example.com");
   assert.equal((await readdir(reportsDir)).length, 1);
 });
 
 test("file and email actions can run together", async () => {
-  const beforeCount = sentMessages.length;
   const response = await query({
     prompt: "add 5 and 7, then multiply by 2",
     saveTextFile: true,
@@ -185,33 +180,23 @@ test("file and email actions can run together", async () => {
   });
   assert.equal(response.status, 200);
   assert.equal(response.body.file.status, "saved");
-  assert.equal(response.body.email.status, "sent");
+  assert.equal(response.body.email.status, "disabled");
   assert.equal(await readFile(response.body.file.path, "utf8"), response.body.display);
-  assert.equal(sentMessages.length, beforeCount + 1);
-  assert.equal(sentMessages.at(-1).text, response.body.display);
+  assert.equal(response.body.email.draft.text, response.body.display);
 });
 
-test("invalid or unavailable email does not send", async () => {
-  const beforeCount = sentMessages.length;
+test("invalid email is rejected and valid email is draft only", async () => {
   assert.equal((await query({ prompt: "5 + 7", emailTo: "invalid" })).status, 400);
-  assert.equal(sentMessages.length, beforeCount);
-
-  const noMailTools = createReportTools({ outputDir: reportsDir });
-  const noMailHandler = createApiHandler(createCalculatorGraph(mockModel, { reportTools: noMailTools }));
-  const response = await query({ prompt: "5 + 7", emailTo: "recipient@example.com" }, noMailHandler);
-  assert.equal(response.status, 502);
-  assert.deepEqual(response.body.email, { status: "failed", error: "Email is not configured on this server." });
-  assert.equal(sentMessages.length, beforeCount);
-
-  const partial = await query({
-    prompt: "5 + 7",
-    saveTextFile: true,
-    emailTo: "recipient@example.com",
-  }, noMailHandler);
-  assert.equal(partial.status, 502);
-  assert.equal(partial.body.file.status, "saved");
-  assert.equal(partial.body.email.status, "failed");
-  assert.equal(await readFile(partial.body.file.path, "utf8"), partial.body.display);
+  const draft = await reportTools.langChainTools.sendMail.invoke({
+    report: {
+      prompt: "5 + 7", expression: "5+7", result: 12,
+      steps: [{ a: 5, b: 7, operation: "add", result: 12 }],
+      explanation: "First, 5 + 7 = 12. The final result is 12.",
+    },
+    to: "recipient@example.com",
+  });
+  assert.equal(draft.status, "disabled");
+  assert.match(draft.draft.text, /Result: 12/);
 });
 
 test("query API rejects invalid arithmetic", async () => {

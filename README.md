@@ -1,18 +1,26 @@
-# LangGraph DMAS query API
+# LangGraph DMAS API
 
-A small Node.js API for division, multiplication, addition, and subtraction across two or more numbers. LangChain sends the prompt to the configured Amazon Bedrock model. LangGraph interprets the request, calculates it, and explains each step using the verified arithmetic results.
+A Node.js API that interprets an arithmetic prompt with LangChain and Amazon Bedrock, calculates each operation with a separate tool, and explains every step with LangGraph.
 
-## Arithmetic tools
+## Project layout
 
-[server.js](./server.js) exports four distinct tools in the `arithmeticTools` object: `add`, `subtract`, `multiply`, and `divide`. Each entry has a `description`, an `args` Zod schema for `a` and `b`, and an `execute` function. The same definitions are exposed as callable LangChain tools in the `langChainTools` object. The LangGraph calculation step invokes the corresponding tool for each operation in the expression.
+| File | Responsibility |
+| --- | --- |
+| `server.js` | Small startup entry and public exports |
+| `src/runtime.js` | Bedrock model and server configuration |
+| `src/http.js` | `POST /query` and `GET /health` |
+| `src/model.js` | Prompt template and model response parsing |
+| `src/graph.js` | Interpret, calculate, explain, display, and optional action flow |
+| `src/calculator.js` | Expression validation, precedence, and step explanations |
+| `src/tools/arithmetic.js` | Four arithmetic tool definitions and LangChain wrappers |
+| `src/tools/report.js` | Display, text file, and disabled email draft tools |
 
-[report-tools.js](./report-tools.js) defines three more LangChain tools: `display`, `saveTextFile`, and `sendMail`. They all use the same report data: the original prompt, interpreted expression, calculation steps, result, and explanation. The graph always calls `display`; it calls the file and mail tools only when the request explicitly asks for them.
+Every tool definition has `description`, `args` (a Zod schema), and `execute`. The arithmetic tools are `add`, `subtract`, `multiply`, and `divide`. The report tools are `display`, `saveTextFile`, and `sendMail`. `sendMail` creates a draft only; delivery is disabled.
 
 ```js
 import { arithmeticTools, langChainTools } from "./server.js";
 
 console.log(arithmeticTools.add.description);
-console.log(arithmeticTools.add.args.shape);
 console.log(await langChainTools.add.invoke({ a: 5, b: 7 })); // 12
 ```
 
@@ -25,37 +33,17 @@ npm install
 cp .env.example .env
 ```
 
-Fill in `BEDROCK_API_KEY` in `.env`, then run:
+Set `BEDROCK_API_KEY` in `.env`, then start the server:
 
 ```sh
 npm start
 ```
 
-To enable email, set `SMTP_HOST` and `SMTP_FROM` in `.env`. Set `SMTP_PORT`, `SMTP_SECURE`, and, if your server requires login, both `SMTP_USER` and `SMTP_PASSWORD`. `REPORTS_DIR` selects where requested text files are saved; it defaults to `reports/`. The output directory is excluded from Git. The API listens on `127.0.0.1` by default; set `HOST` to another address if needed.
+The defaults are `BEDROCK_REGION=us-east-1`, `BEDROCK_MODEL=qwen.qwen3-vl-235b-a22b`, `HOST=127.0.0.1`, and `PORT=3000`. `REPORTS_DIR` selects the directory for requested text files; its default is `reports/`.
 
-## Query
+## Query API
 
-```sh
-curl -X POST http://localhost:3000/query \
-  -H 'Content-Type: application/json' \
-  -d '{"prompt":"What is 10 divided by 2?"}'
-```
-
-Example response:
-
-```json
-{
-  "operation": "divide",
-  "a": 10,
-  "b": 2,
-  "result": 5,
-  "steps": [{"a": 10, "b": 2, "operation": "divide", "result": 5}],
-  "explanation": "First, 10 / 2 = 5. The final result is 5.",
-  "display": "Prompt: What is 10 divided by 2?\nExpression: 10/2\nSteps:\n1. 10 / 2 = 5\nResult: 5\nExplanation: First, 10 / 2 = 5. The final result is 5.\n"
-}
-```
-
-Multiple operations and more than two numbers are supported:
+Send a JSON body to `POST /query`:
 
 ```sh
 curl -X POST http://localhost:3000/query \
@@ -76,22 +64,25 @@ curl -X POST http://localhost:3000/query \
 }
 ```
 
+A request with one operation also includes `operation`, `a`, and `b` instead of `expression`. Standard arithmetic precedence applies. Parentheses preserve grouping. Prompts must contain at least two numeric values, and the interpreted expression must use each exactly once. Invalid arithmetic and division by zero return an `error` response.
+
 ### Optional actions
 
-A plain query only displays the result in the JSON response. To save a text report, add `"saveTextFile": true` to the request body. The response includes `"file": {"status": "saved", "path": "..."}`.
+Optional actions run only when explicitly requested in the JSON body:
 
-To email the report, add `"emailTo": "recipient@example.com"`. The response includes `"email": {"status": "sent", "to": "recipient@example.com"}`. Both options can be used together:
-
-```sh
-curl -X POST http://localhost:3000/query \
-  -H 'Content-Type: application/json' \
-  -d '{"prompt":"Add 5 and 7, then multiply by 2","saveTextFile":true,"emailTo":"recipient@example.com"}'
+```json
+{
+  "prompt": "Add 5 and 7, then multiply by 2",
+  "saveTextFile": true,
+  "emailTo": "recipient@example.com"
+}
 ```
 
-If an optional action fails, its response field reports `"status": "failed"` and the calculation remains in the response. Email uses the configured SMTP server; no email is sent while running the tests.
+- `saveTextFile: true` saves the prompt, expression, steps, result, and explanation to a new text file. The response contains `file: { "status": "saved", "path": "..." }`.
+- `emailTo` creates an email draft containing the same report. The response contains `email: { "status": "disabled", "draft": { "to": "...", "subject": "DMAS calculation result", "text": "..." } }`. No email is sent.
 
-Standard arithmetic precedence applies. Parentheses preserve explicit grouping and sequential instructions. Prompts must include at least two numeric values; each value must be used once. Invalid requests, ambiguous operations, and division by zero return an `error` response. `GET /health` returns `{"status":"ok"}`.
+The two options can be used together. A file save error is reported in the `file` field, while the calculation remains available in the response. `GET /health` returns `{"status":"ok"}`.
 
-Run the local tests with `npm test`. They use a mock model and do not need a Bedrock key.
+Run `npm test` to verify calculations, graph flow, and API behavior with a mock model. The tests do not need a Bedrock key.
 
-The provided API key authenticates direct Bedrock **Converse** model calls. Amazon Bedrock API keys cannot authenticate the separate Bedrock Agents Runtime API. To invoke an existing Bedrock Agent instead, you would need its agent ID, alias ID, and AWS credentials. This prototype uses the model ID you supplied directly.
+This prototype uses the supplied model ID through Bedrock Converse. Calling an existing Bedrock Agent would require its agent ID, alias ID, and AWS credentials instead of this model configuration.
