@@ -1,12 +1,19 @@
 import { beforeAll, afterAll, describe, expect, it } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import type pg from 'pg';
+import { AIMessage, type BaseMessage } from '@langchain/core/messages';
+import type { ChatBedrockConverse } from '@langchain/aws';
 import { createPool, runSqlFile } from '../src/db/postgres.js';
 import { queryCustomers } from '../src/tools/get-customers.tool.js';
 import { createMemoryRepository } from '../src/memory/memory.repository.js';
 import { extractExplicitFacts, isReusableProcedureInstruction, saveTurnMemories } from '../src/memory/memory.service.js';
 
 let pool: pg.Pool;
+const unchangedModel = { invoke: async (messages: BaseMessage[]) => {
+  const input = JSON.parse(String(messages.at(-1)?.content)) as { original: string; existing: { id: string; content: string }[] };
+  return new AIMessage(JSON.stringify({ content: input.original,
+    equivalentMemoryId: input.existing.find(item => item.content === input.original)?.id ?? null }));
+} } as unknown as ChatBedrockConverse;
 beforeAll(async () => {
   const url = process.env.TEST_DATABASE_URL ?? 'postgresql://postgres:postgres@localhost:5432/langgraph_memory_test';
   if (url === process.env.DATABASE_URL || !url.endsWith('/langgraph_memory_test')) throw new Error('Unsafe test database URL');
@@ -82,10 +89,10 @@ describe('employee memories', () => {
   it('keeps unrelated facts and updates equivalent facts without duplicate episodes', async () => {
     const repository = createMemoryRepository(pool);
     const scope = { organizationId: randomUUID(), employeeId: 'e', userId: 'u', threadId: 't' };
-    await saveTurnMemories(repository, scope, 'turn-1', 'Remember that customer ABC belongs to healthcare', []);
-    await saveTurnMemories(repository, scope, 'turn-2', 'Remember that customer ABC prefers Karachi', []);
-    await saveTurnMemories(repository, scope, 'turn-3', 'Remember that customer ABC belongs to finance', []);
-    await saveTurnMemories(repository, scope, 'turn-3', 'Remember that customer ABC belongs to finance', []);
+    await saveTurnMemories(repository, scope, 'turn-1', 'Remember that customer ABC belongs to healthcare', [], unchangedModel);
+    await saveTurnMemories(repository, scope, 'turn-2', 'Remember that customer ABC prefers Karachi', [], unchangedModel);
+    await saveTurnMemories(repository, scope, 'turn-3', 'Remember that customer ABC belongs to finance', [], unchangedModel);
+    await saveTurnMemories(repository, scope, 'turn-3', 'Remember that customer ABC belongs to finance', [], unchangedModel);
     const facts = await repository.list(scope, 'semantic');
     expect(facts.map(fact => fact.content).sort()).toEqual(['customer ABC belongs to finance', 'customer ABC prefers Karachi']);
     expect(await repository.list(scope, 'episodic')).toHaveLength(3);
@@ -93,8 +100,8 @@ describe('employee memories', () => {
   it('does not save procedures as part of chat memory persistence', async () => {
     const repository = createMemoryRepository(pool);
     const scope = { organizationId: randomUUID(), employeeId: 'e', userId: 'u', threadId: 't' };
-    const saved = await saveTurnMemories(repository, scope, 'one', 'Remember that customer names should be prefixed with Test-', []);
-    expect(saved).toEqual({ episodeSaved: false, semanticUpdates: 0 });
+    const saved = await saveTurnMemories(repository, scope, 'one', 'Remember that customer names should be prefixed with Test-', [], unchangedModel);
+    expect(saved).toEqual({ episodeSaved: false, semanticUpdates: 0, semanticDuplicates: 0 });
     expect(await repository.list(scope)).toEqual([]);
   });
 });

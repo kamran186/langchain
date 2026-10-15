@@ -49,7 +49,7 @@ curl --location 'http://localhost:3001/api/procedural-memories' \
   }'
 ```
 
-This endpoint stores the procedure without calling Bedrock. Chat can apply it on later turns.
+Qwen corrects the instruction's wording before storage. The response includes `status: "created"` and the polished memory. Chat can apply it on later turns.
 
 ## 4. Replace the procedural preference
 
@@ -154,3 +154,35 @@ curl --location 'http://localhost:3001/api/memories' \
   --header 'Content-Type: application/json' \
   --data '{"organizationId":"org-001","employeeId":"emp-memory-curl-demo","userId":"user-002","type":"episodic"}'
 ```
+
+## 10. Try an equivalent semantic fact
+
+```sh
+curl --location 'http://localhost:3001/api/chat' \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "organizationId": "org-001",
+    "employeeId": "emp-memory-curl-demo",
+    "userId": "user-002",
+    "threadId": "semantic-repeat-001",
+    "message": "Remember that Ahmed Khan is employed by SalesTeq in IT."
+  }'
+```
+
+When Qwen recognizes the same meaning as step 1, `memoryWrite.semantic` is `already_exists` and `response` says the fact is already stored. The semantic record keeps its original ID and source. This completed chat turn still gets its own episode.
+
+## 11. Try an equivalent procedural instruction
+
+```sh
+curl --location 'http://localhost:3001/api/procedural-memories' \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "organizationId": "org-001",
+    "employeeId": "emp-memory-curl-demo",
+    "userId": "user-002",
+    "key": "customer-name-style-copy",
+    "instruction": "Whenever you show customer results, put Custo- before each customer name."
+  }'
+```
+
+When Qwen recognizes the same meaning as step 4, this returns `status: "already_exists"` and the existing `customer-format` record. No second procedure is stored. The duplicate check searches only the supplied organization and employee's memories.

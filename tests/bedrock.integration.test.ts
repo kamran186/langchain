@@ -8,8 +8,24 @@ import { runSqlFile } from '../src/db/postgres.js';
 import { createApp } from '../src/app.js';
 import request from 'supertest';
 import { randomUUID } from 'node:crypto';
+import { refineMemory } from '../src/memory/refine-memory.js';
 
 describe('configured Bedrock Qwen', () => {
+  it('polishes wording and recognizes an equivalent stored procedure', async () => {
+    const model = createModel(loadEnv());
+    const existing = { id: randomUUID(), content: 'Always display customer names in a table.' };
+    const result = await refineMemory(model, 'procedural',
+      'Always disply customer names in a tabel.', [existing]);
+    expect(result.content.toLowerCase()).toContain('display customer names in a table');
+    expect(result.equivalentMemoryId).toBe(existing.id);
+  });
+  it('keeps an uncertain business term while fixing surrounding typos', async () => {
+    const result = await refineMemory(createModel(loadEnv()), 'procedural',
+      'revive orders shold be processssed firts always.');
+    expect(result.content.toLowerCase()).toContain('revive orders');
+    expect(result.content.toLowerCase()).toContain('processed first');
+    expect(result.content.toLowerCase()).not.toMatch(/shold|processssed|firts/);
+  });
   it('responds and emits a native get_customers call', async () => {
     const env = loadEnv();
     const model: ChatBedrockConverse = createModel(env);

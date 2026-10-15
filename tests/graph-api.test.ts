@@ -13,7 +13,12 @@ const prompts: BaseMessage[][] = [];
 const mockModel = {
   invoke: async (messages: BaseMessage[]) => {
     prompts.push(messages);
-    const input = JSON.parse(String(messages.at(-1)?.content)) as { draftAnswer: string; preferences: { content: string }[] };
+    const input = JSON.parse(String(messages.at(-1)?.content)) as {
+      memoryType?: string; original?: string; existing?: { id: string; content: string }[];
+      draftAnswer: string; preferences: { content: string }[];
+    };
+    if (input.memoryType) return new AIMessage(JSON.stringify({ content: input.original,
+      equivalentMemoryId: input.existing?.find(item => item.content === input.original)?.id ?? null }));
     if (input.preferences.some(preference => /table/i.test(preference.content)) && input.draftAnswer.startsWith('Customers: ')) {
       const names = input.draftAnswer.slice('Customers: '.length).split(', ');
       return new AIMessage(`| Customer |\n|---|\n${names.map(name => `| ${name} |`).join('\n')}`);
@@ -58,6 +63,151 @@ afterAll(async () => { await pool?.end(); });
 const scope = () => ({ organizationId: 'org-001', employeeId: randomUUID(), userId: 'user-001', threadId: randomUUID() });
 
 describe('LangGraph and API', () => {
+  it('stores a corrected procedural instruction and preserves the original input', async () => {
+    const id = scope();
+    const model = {
+      invoke: async () => new AIMessage('{"content":"Revive orders should always be processed first."}'),
+      bindTools: mockModel.bindTools,
+    } as unknown as ChatBedrockConverse;
+    const { app } = await createApp({ pool, model });
+    const raw = 'revive orders shold be processssed firts always.';
+    const saved = await request(app).post('/api/procedural-memories').send({
+      ...id, key: 'order-priority', instruction: raw,
+    }).expect(200);
+    expect(saved.body.memory.content).toBe('Revive orders should always be processed first.');
+    const record = await pool.query<{ content: string; metadata: { originalInstruction: string } }>(
+      'SELECT content, metadata FROM employee_memories WHERE id=$1', [saved.body.memory.id]);
+    expect(record.rows[0]).toMatchObject({ content: 'Revive orders should always be processed first.',
+      metadata: { originalInstruction: raw } });
+  });
+
+  it('accepts a JSON code fence around a valid refined memory', async () => {
+    const id = scope();
+    const model = {
+      invoke: async () => new AIMessage('```json\n{"content":"Revive orders should always be processed first.","equivalentMemoryId":null}\n```'),
+      bindTools: mockModel.bindTools,
+    } as unknown as ChatBedrockConverse;
+    const { app } = await createApp({ pool, model });
+    const saved = await request(app).post('/api/procedural-memories').send({
+      ...id, key: 'order-priority', instruction: 'revive orders shold be processssed firts always.',
+    }).expect(200);
+    expect(saved.body.memory.content).toBe('Revive orders should always be processed first.');
+  });
+
+  it('stores a corrected semantic fact from chat while retaining its source wording', async () => {
+    const id = scope();
+    const model = {
+      invoke: async () => new AIMessage('{"content":"Ahmed Khan works at SalesTeq in the IT industry."}'),
+      bindTools: mockModel.bindTools,
+    } as unknown as ChatBedrockConverse;
+    const { app } = await createApp({ pool, model });
+    const raw = 'Remember that Ahmed Khan wurks at SalesTeq in the IT industrey.';
+    await request(app).post('/api/chat').send({ ...id, message: raw }).expect(200);
+    const record = await pool.query<{ content: string; metadata: { originalStatement: string } }>(
+      "SELECT content, metadata FROM employee_memories WHERE organization_id=$1 AND employee_id=$2 AND memory_type='semantic'",
+      [id.organizationId, id.employeeId]);
+    expect(record.rows[0]).toMatchObject({ content: 'Ahmed Khan works at SalesTeq in the IT industry.',
+      metadata: { originalStatement: raw } });
+  });
+
+  it('does not overwrite a procedure when refinement returns malformed output', async () => {
+    const id = scope();
+    const validModel = {
+      invoke: async () => new AIMessage('{"content":"Revive orders should always be processed first."}'),
+      bindTools: mockModel.bindTools,
+    } as unknown as ChatBedrockConverse;
+    const first = await createApp({ pool, model: validModel });
+    await request(first.app).post('/api/procedural-memories').send({
+      ...id, key: 'order-priority', instruction: 'revive orders shold be processssed firts always.',
+    }).expect(200);
+    const brokenModel = {
+      invoke: async () => new AIMessage('{"content":""}'),
+      bindTools: mockModel.bindTools,
+    } as unknown as ChatBedrockConverse;
+    const second = await createApp({ pool, model: brokenModel });
+    await request(second.app).post('/api/procedural-memories').send({
+      ...id, key: 'order-priority', instruction: 'Another typo-filled instruction.',
+    }).expect(500);
+    const stored = await request(second.app).post('/api/memories').send({ ...id, type: 'procedural' }).expect(200);
+    expect(stored.body.memories).toMatchObject([{ content: 'Revive orders should always be processed first.' }]);
+  });
+
+  it('returns an existing procedure for identical wording or an equivalent paraphrase', async () => {
+    const id = scope();
+    let refinements = 0;
+    const model = {
+      invoke: async (messages: BaseMessage[]) => {
+        refinements++;
+        const input = JSON.parse(String(messages.at(-1)?.content)) as {
+          original: string; existing: { id: string; content: string }[];
+        };
+        return new AIMessage(JSON.stringify({ content: 'Revive orders should always be processed first.',
+          equivalentMemoryId: input.existing[0]?.id ?? null }));
+      },
+      bindTools: mockModel.bindTools,
+    } as unknown as ChatBedrockConverse;
+    const { app } = await createApp({ pool, model });
+    const first = await request(app).post('/api/procedural-memories').send({
+      ...id, key: 'priority-1', instruction: 'revive orders shold be processssed firts always.',
+    }).expect(200);
+    expect(first.body.status).toBe('created');
+    const repeated = await request(app).post('/api/procedural-memories').send({
+      ...id, key: 'priority-1', instruction: 'revive orders shold be processssed firts always.',
+    }).expect(200);
+    expect(repeated.body.status).toBe('already_exists');
+    expect(repeated.body.message).toBe('An equivalent procedural memory already exists. No new memory was stored.');
+    expect(repeated.body.memory.id).toBe(first.body.memory.id);
+    const paraphrase = await request(app).post('/api/procedural-memories').send({
+      ...id, userId: 'other-user', key: 'priority-2', instruction: 'Process revive orders before other orders every time.',
+    }).expect(200);
+    expect(paraphrase.body.status).toBe('already_exists');
+    expect(paraphrase.body.message).toBe('An equivalent procedural memory already exists. No new memory was stored.');
+    expect(paraphrase.body.memory.id).toBe(first.body.memory.id);
+    const stored = await request(app).post('/api/memories').send({ ...id, type: 'procedural' }).expect(200);
+    expect(stored.body.memories).toHaveLength(1);
+    expect(stored.body.memories[0].userId).toBe(id.userId);
+    expect(refinements).toBe(2);
+    const otherEmployee = await request(app).post('/api/procedural-memories').send({
+      ...id, employeeId: randomUUID(), key: 'priority-1',
+      instruction: 'revive orders shold be processssed firts always.',
+    }).expect(200);
+    expect(otherEmployee.body.status).toBe('created');
+    expect(otherEmployee.body.memory.id).not.toBe(first.body.memory.id);
+    const otherOrganization = await request(app).post('/api/procedural-memories').send({
+      ...id, organizationId: 'org-002', key: 'priority-1',
+      instruction: 'revive orders shold be processssed firts always.',
+    }).expect(200);
+    expect(otherOrganization.body.status).toBe('created');
+    expect(otherOrganization.body.memory.id).not.toBe(first.body.memory.id);
+  });
+
+  it('reports an equivalent semantic fact without adding a second employee memory', async () => {
+    const id = scope();
+    const model = {
+      invoke: async (messages: BaseMessage[]) => {
+        const input = JSON.parse(String(messages.at(-1)?.content)) as {
+          original: string; existing: { id: string }[];
+        };
+        return new AIMessage(JSON.stringify({ content: 'Ahmed Khan works at SalesTeq in the IT industry.',
+          equivalentMemoryId: input.existing[0]?.id ?? null }));
+      },
+      bindTools: mockModel.bindTools,
+    } as unknown as ChatBedrockConverse;
+    const { app } = await createApp({ pool, model });
+    await request(app).post('/api/chat').send({ ...id,
+      message: 'Remember that Ahmed Khan works at SalesTeq in the IT industry.',
+    }).expect(200);
+    const repeated = await request(app).post('/api/chat').send({
+      ...id, threadId: randomUUID(), userId: 'other-user',
+      message: 'Remember that Ahmed Khan is employed by SalesTeq in IT.',
+    }).expect(200);
+    expect(repeated.body.memoryWrite.semantic).toBe('already_exists');
+    expect(repeated.body.response).toBe('This fact is already stored in semantic memory.');
+    const stored = await request(app).post('/api/memories').send({ ...id, type: 'semantic' }).expect(200);
+    expect(stored.body.memories).toHaveLength(1);
+    expect(stored.body.memories[0].userId).toBe(id.userId);
+  });
+
   it('runs model-selected filters through the real customer tool before final response', async () => {
     const { app } = await createApp({ pool, model: mockModel });
     const input = { ...scope(), message: 'Get active customers from Karachi' };
@@ -109,12 +259,15 @@ describe('LangGraph and API', () => {
     expect(isolated.body.memories).toEqual([]);
   });
 
-  it('saves a procedure through its API without calling Bedrock or the customer tool', async () => {
-    const confusedModel = {
-      invoke: async () => { throw new Error('Bedrock should not be called'); },
-      bindTools: () => { throw new Error('Bedrock should not be called'); },
+  it('refines a procedure through its API without calling the customer tool', async () => {
+    const refiningModel = {
+      invoke: async (messages: BaseMessage[]) => {
+        const input = JSON.parse(String(messages.at(-1)?.content)) as { original: string };
+        return new AIMessage(JSON.stringify({ content: input.original }));
+      },
+      bindTools: () => { throw new Error('Customer tool should not be called'); },
     } as unknown as ChatBedrockConverse;
-    const { app } = await createApp({ pool, model: confusedModel });
+    const { app } = await createApp({ pool, model: refiningModel });
     const id = scope();
     const result = await request(app).post('/api/procedural-memories').send({
       ...id, key: 'customer-name-display', instruction: 'Always display customer names with Test- before each name in customer results.',
@@ -144,8 +297,11 @@ describe('LangGraph and API', () => {
         }] });
       } }),
       invoke: async (messages: BaseMessage[]) => {
+        const input = JSON.parse(String(messages.at(-1)?.content)) as {
+          memoryType?: string; original?: string; draftAnswer: string; preferences: { content: string }[];
+        };
+        if (input.memoryType) return new AIMessage(JSON.stringify({ content: input.original }));
         presentationPrompts.push(messages);
-        const input = JSON.parse(String(messages.at(-1)?.content)) as { draftAnswer: string; preferences: { content: string }[] };
         return new AIMessage(input.preferences.some(preference => preference.content.includes('Test-'))
           ? input.draftAnswer.replaceAll('Ahmed Khan', 'Test-Ahmed Khan') : input.draftAnswer);
       },
@@ -180,7 +336,10 @@ describe('LangGraph and API', () => {
         return new AIMessage({ content: '', tool_calls: [{ name: 'get_customers', args: {}, id: randomUUID() }] });
       } }),
       invoke: async (messages: BaseMessage[]) => {
-        const input = JSON.parse(String(messages.at(-1)?.content)) as { draftAnswer: string; preferences: { content: string }[] };
+        const input = JSON.parse(String(messages.at(-1)?.content)) as {
+          memoryType?: string; original?: string; draftAnswer: string; preferences: { content: string }[];
+        };
+        if (input.memoryType) return new AIMessage(JSON.stringify({ content: input.original }));
         if (!input.preferences.some(preference => preference.content.includes('Custo-'))) return new AIMessage(input.draftAnswer);
         return new AIMessage(input.draftAnswer.replaceAll('Ahmed Khan', 'Custo-Ahmed Khan')
           .replaceAll('Ayesha Ali', 'Custo-Ayesha Ali').replaceAll('Bilal Shah', 'Custo-Bilal Shah'));
@@ -255,7 +414,10 @@ describe('LangGraph and API', () => {
           name: 'get_customers', args: { name: 'Ahmed Khan' }, id: randomUUID(),
         }] });
       } }),
-      invoke: async () => { throw new Error('No Bedrock call expected'); },
+      invoke: async (messages: BaseMessage[]) => {
+        const input = JSON.parse(String(messages.at(-1)?.content)) as { original: string };
+        return new AIMessage(JSON.stringify({ content: input.original }));
+      },
     } as unknown as ChatBedrockConverse;
     const { app } = await createApp({ pool, model });
     const id = scope();

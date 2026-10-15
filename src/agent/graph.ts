@@ -136,7 +136,7 @@ export function createAgent(pool: pg.Pool, model: ChatBedrockConverse, memoryLim
     .addNode('saveMemories', async (state) => {
       const final = state.messages.at(-1);
       if (!(final instanceof AIMessage) || final.tool_calls?.length) throw new Error('Final response missing');
-      const saved = await saveTurnMemories(repository, state.context, state.turnId, state.currentMessage, state.executions);
+      const saved = await saveTurnMemories(repository, state.context, state.turnId, state.currentMessage, state.executions, model);
       return { flow: [...state.flow, { stage: 'memories_saved', component: 'Memory', status: 'completed', details: saved }] };
     })
     .addEdge(START, 'loadMemories')
@@ -165,8 +165,13 @@ export function createAgent(pool: pg.Pool, model: ChatBedrockConverse, memoryLim
         { stage: 'checkpoint_persisted', component: 'LangGraph', status: 'completed' },
         { stage: 'response_ready', component: 'API', status: 'completed' },
       ];
+      const memorySaved = final.flow.filter(event => event.stage === 'memories_saved').at(-1);
+      const semanticStatus = memorySaved?.details?.semanticDuplicates
+        ? 'already_exists' : memorySaved?.details?.semanticUpdates ? 'stored' : 'none';
       return {
-        response: responseText(final.messages.at(-1)!),
+        response: semanticStatus === 'already_exists'
+          ? 'This fact is already stored in semantic memory.' : responseText(final.messages.at(-1)!),
+        memoryWrite: { semantic: semanticStatus },
         toolCalls: final.executions.map(({ name, filters }) => ({ name, filters })),
         memoriesUsed: Object.fromEntries((['semantic','episodic','procedural'] as const).map(type => [type, final.memoriesUsed[type].map(({ id, content }) => ({ id, content }))])) as Record<'semantic' | 'episodic' | 'procedural', { id: string; content: string }[]>,
         flow: events.map((event, index) => ({ step: index + 1, ...event })),

@@ -21,7 +21,12 @@ flowchart TD
     customerTool --> semanticAgent
     needsTool -- No --> semanticFinal["LLM Agent: final answer"]
     semanticFinal --> explicitFact{"Current prompt explicitly states a reusable fact?"}
-    explicitFact -- Yes --> semanticSave["Memory: upsert fact and save episode in one transaction"]
+    explicitFact -- Yes --> semanticExact{"Exact fact already stored in this employee scope?"}
+    semanticExact -- Yes --> semanticEpisode
+    semanticExact -- No --> semanticRefine["Qwen: polish the fact and compare scoped semantic memories"]
+    semanticRefine --> semanticDuplicate{"Equivalent fact exists?"}
+    semanticDuplicate -- Yes --> semanticEpisode
+    semanticDuplicate -- No --> semanticSave["Memory: upsert polished fact and save episode in one transaction"]
     explicitFact -- No --> semanticEpisode["Memory: save completed interaction episode"]
     semanticSave --> semanticResponse["API: return response and memoriesUsed.semantic"]
     semanticEpisode --> semanticResponse
@@ -31,7 +36,7 @@ flowchart TD
     classDef agentNode fill:#fef3c7,stroke:#d97706,color:#78350f
     classDef dataNode fill:#f3e8ff,stroke:#9333ea,color:#581c87
     class loadNode graphNode
-    class semanticRank,semanticSave,semanticEpisode memoryNode
+    class semanticRank,semanticRefine,semanticSave,semanticEpisode memoryNode
     class semanticContext,customerTool chainNode
     class semanticAgent,semanticFinal agentNode
     class semanticDb dataNode
@@ -81,8 +86,15 @@ flowchart TD
     userPrompt["User saves a reusable display preference"] --> writeApi["POST /api/procedural-memories"]
     writeApi --> writeValidate["API: validate organization, employee, user, key, instruction"]
     writeValidate --> writeScope["Memory: use caller organization and employee scope"]
-    writeScope --> writeDb[("PostgreSQL: upsert procedural record by scoped key")]
-    writeDb --> writeResponse["API: return stored ID, content, and timestamps"]
+    writeScope --> exact{"Exact instruction already stored in this employee scope?"}
+    exact -- Yes --> writeResponse
+    exact -- No --> candidates[("PostgreSQL: retrieve scoped procedures for comparison")]
+    candidates --> refine["Qwen: polish wording and compare meanings"]
+    refine --> duplicate{"Equivalent instruction exists?"}
+    duplicate -- Yes --> writeResponse["API: return already_exists and existing record"]
+    duplicate -- No --> writeDb[("PostgreSQL: insert or update polished procedure by scoped key")]
+    writeDb --> saveResponse["API: return created or updated and stored record"]
+    saveResponse --> nextPrompt["Later user sends Fetch Customers to POST /api/chat"]
     writeResponse --> nextPrompt["Later user sends Fetch Customers to POST /api/chat"]
     nextPrompt --> loadNode["LangGraph: loadMemories"]
     loadNode --> readDb[("PostgreSQL: load recent procedures for organization and employee")]
@@ -93,6 +105,7 @@ flowchart TD
     readDb --> presentation
     presentation --> chatResponse["API: return response, toolCalls, and memoriesUsed.procedural"]
     writeResponse --> readApi["Optional: POST /api/memories with type procedural"]
+    saveResponse --> readApi
     readApi --> readValidate["API: validate organization, employee, user"]
     readValidate --> inspectDb[("PostgreSQL: list scoped procedural records")]
     inspectDb --> readResponse["API: return stored procedures"]
@@ -104,10 +117,10 @@ flowchart TD
     classDef agentNode fill:#fef3c7,stroke:#d97706,color:#78350f
     classDef chainNode fill:#cffafe,stroke:#0891b2,color:#164e63
     classDef rejectNode fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
-    class writeApi,writeValidate,writeResponse,nextPrompt,chatResponse,readApi,readValidate,readResponse apiNode
-    class writeScope memoryNode
+    class writeApi,writeValidate,writeResponse,saveResponse,nextPrompt,chatResponse,readApi,readValidate,readResponse apiNode
+    class writeScope,refine memoryNode
     class loadNode graphNode
-    class writeDb,readDb,inspectDb dataNode
+    class candidates,writeDb,readDb,inspectDb dataNode
     class toolDecision,draft,presentation agentNode
     class customerTool chainNode
     class chatReject rejectNode

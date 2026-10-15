@@ -8,6 +8,7 @@ import { loadEnv, type Env } from './config/env.js';
 import { createModel } from './agent/model.js';
 import { createAgent } from './agent/graph.js';
 import { isReusableProcedureInstruction } from './memory/memory.service.js';
+import { refineMemory } from './memory/refine-memory.js';
 
 const identifier = z.string().refine(value => value.trim().length > 0, 'Required nonempty string');
 const baseRequest = z.object({ organizationId: identifier, employeeId: identifier, userId: identifier });
@@ -22,7 +23,8 @@ const procedureRequest = baseRequest.extend({
 export async function createApp(options: { pool?: pg.Pool; model?: ChatBedrockConverse; env?: Env } = {}) {
   const env = options.env ?? loadEnv();
   const pool = options.pool ?? createPool(env.DATABASE_URL);
-  const agent = createAgent(pool, options.model ?? createModel(env), env.MEMORY_LIMIT);
+  const model = options.model ?? createModel(env);
+  const agent = createAgent(pool, model, env.MEMORY_LIMIT);
   await agent.setup();
   const app = express();
   app.use(express.json({ limit: '64kb' }));
@@ -59,13 +61,27 @@ export async function createApp(options: { pool?: pg.Pool; model?: ChatBedrockCo
   app.post('/api/procedural-memories', async (req, res) => {
     try {
       const input = procedureRequest.parse(req.body);
-      const memory = await agent.repository.upsert({
+      const scope = {
         organizationId: input.organizationId, employeeId: input.employeeId,
         userId: input.userId, threadId: input.threadId ?? null,
-      }, 'procedural', input.key, input.instruction, { source: 'procedural-memory-api' });
+      };
+      const exact = await agent.repository.findByOriginal(scope, 'procedural', input.instruction);
+      const candidates = exact ? [] : (await agent.repository.retrieve(scope, input.instruction, 20, ['procedural'])).procedural;
+      const refined = exact
+        ? { content: exact.content, equivalentMemoryId: exact.id }
+        : await refineMemory(model, 'procedural', input.instruction, candidates);
+      const equivalent = exact ?? candidates.find(memory => memory.id === refined.equivalentMemoryId);
+      const previous = await agent.repository.findByKey(scope, 'procedural', input.key);
+      const status = equivalent ? 'already_exists' : previous ? 'updated' : 'created';
+      const memory = equivalent ?? await agent.repository.upsert(scope, 'procedural', input.key, refined.content,
+        { source: 'procedural-memory-api', originalInstruction: input.instruction });
       res.json({
         organizationId: input.organizationId, employeeId: input.employeeId,
         userId: input.userId, threadId: input.threadId ?? null,
+        status,
+        message: status === 'already_exists'
+          ? 'An equivalent procedural memory already exists. No new memory was stored.'
+          : status === 'updated' ? 'Procedural memory updated.' : 'Procedural memory saved.',
         memory: { id: memory.id, key: memory.memory_key, content: memory.content, type: memory.memory_type,
           createdAt: memory.created_at, updatedAt: memory.updated_at },
       });

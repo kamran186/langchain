@@ -2,6 +2,8 @@ import { z } from 'zod';
 import type { CustomerFilters } from '../tools/get-customers.tool.js';
 import type { Scope } from './memory.repository.js';
 import { createMemoryRepository } from './memory.repository.js';
+import type { ChatBedrockConverse } from '@langchain/aws';
+import { refineMemory } from './refine-memory.js';
 
 const candidate = z.object({ type: z.literal('semantic'), key: z.string().min(2).max(150), content: z.string().min(5).max(1000) });
 type Execution = { name: 'get_customers'; filters: CustomerFilters; outcome: 'success' | 'empty' | 'failure'; count?: number };
@@ -46,14 +48,26 @@ export function episodeSummary(request: string, executions: Execution[]) {
 
 export async function saveTurnMemories(
   repository: ReturnType<typeof createMemoryRepository>, scope: Scope, turnId: string,
-  message: string, executions: Execution[],
-): Promise<{ episodeSaved: boolean; semanticUpdates: number }> {
-  if (isReusableProcedureInstruction(message)) return { episodeSaved: false, semanticUpdates: 0 };
+  message: string, executions: Execution[], model: ChatBedrockConverse,
+): Promise<{ episodeSaved: boolean; semanticUpdates: number; semanticDuplicates: number }> {
+  if (isReusableProcedureInstruction(message)) return { episodeSaved: false, semanticUpdates: 0, semanticDuplicates: 0 };
   const key = `turn:${turnId}`;
-  const updates = extractExplicitFacts(message);
+  let semanticDuplicates = 0;
+  const updates = [];
+  for (const update of extractExplicitFacts(message)) {
+    if (await repository.findByOriginal(scope, 'semantic', message)) {
+      semanticDuplicates++;
+      continue;
+    }
+    const candidates = (await repository.retrieve(scope, update.content, 20, ['semantic'])).semantic;
+    const refined = await refineMemory(model, 'semantic', update.content, candidates);
+    if (refined.equivalentMemoryId) { semanticDuplicates++; continue; }
+    updates.push({ ...update, content: refined.content, originalStatement: message });
+  }
   await repository.saveTurn(scope, key, episodeSummary(message, executions), { request: message, executions }, updates);
   return {
     episodeSaved: true,
     semanticUpdates: updates.length,
+    semanticDuplicates,
   };
 }

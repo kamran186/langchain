@@ -11,6 +11,20 @@ export type Memories = { semantic: Memory[]; episodic: Memory[]; procedural: Mem
 export type ChatMemories = Memories;
 
 export function createMemoryRepository(pool: pg.Pool) {
+  async function findByOriginal(scope: Scope, type: 'semantic' | 'procedural', original: string): Promise<Memory | null> {
+    const field = type === 'semantic' ? 'originalStatement' : 'originalInstruction';
+    const result = await pool.query<Memory>(
+      `SELECT * FROM employee_memories WHERE organization_id=$1 AND employee_id=$2 AND memory_type=$3
+       AND metadata->>$4=$5 ORDER BY updated_at DESC LIMIT 1`,
+      [scope.organizationId, scope.employeeId, type, field, original]);
+    return result.rows[0] ?? null;
+  }
+  async function findByKey(scope: Scope, type: MemoryType, key: string): Promise<Memory | null> {
+    const result = await pool.query<Memory>(
+      'SELECT * FROM employee_memories WHERE organization_id=$1 AND employee_id=$2 AND memory_type=$3 AND memory_key=$4',
+      [scope.organizationId, scope.employeeId, type, key]);
+    return result.rows[0] ?? null;
+  }
   async function list(scope: Scope, type?: MemoryType): Promise<Memory[]> {
     const result = await pool.query<Memory>(
       `SELECT * FROM employee_memories WHERE organization_id=$1 AND employee_id=$2
@@ -55,7 +69,7 @@ export function createMemoryRepository(pool: pg.Pool) {
     return rows.rows[0]!;
   }
   async function saveTurn(scope: Scope, key: string, content: string, metadata: Record<string, unknown>,
-    updates: { type: 'semantic'; key: string; content: string }[]): Promise<void> {
+    updates: { type: 'semantic'; key: string; content: string; originalStatement: string }[]): Promise<void> {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
@@ -72,7 +86,7 @@ export function createMemoryRepository(pool: pg.Pool) {
            DO UPDATE SET content=EXCLUDED.content,metadata=EXCLUDED.metadata,user_id=EXCLUDED.user_id,
              thread_id=EXCLUDED.thread_id,updated_at=now()`,
           [scope.organizationId, scope.employeeId, scope.userId, scope.threadId, update.type, update.key, update.content,
-            { source: 'explicit-user-instruction' }]);
+            { source: 'explicit-user-instruction', originalStatement: update.originalStatement }]);
       }
       await client.query('COMMIT');
     } catch (error) {
@@ -80,5 +94,5 @@ export function createMemoryRepository(pool: pg.Pool) {
       throw error;
     } finally { client.release(); }
   }
-  return { list, retrieve, upsert, saveEpisode, saveTurn };
+  return { list, retrieve, findByOriginal, findByKey, upsert, saveEpisode, saveTurn };
 }
