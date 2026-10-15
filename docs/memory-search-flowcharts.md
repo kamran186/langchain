@@ -1,6 +1,6 @@
 # Employee memory search flowcharts
 
-Every `POST /api/chat` turn loads all three memory types before the agent runs. Every PostgreSQL memory query is scoped by both `organizationId` and `employeeId`. The stored `userId` and `threadId` identify a memory's source but do not restrict employee-wide recall. Each category returns at most `MEMORY_LIMIT` records (default: five).
+Every `POST /api/chat` turn loads semantic and episodic memory before the agent runs. Procedural memory is managed separately by `POST /api/procedural-memories` and inspected with `POST /api/memories`; chat does not load or apply it. Every PostgreSQL memory query is scoped by both `organizationId` and `employeeId`. The stored `userId` and `threadId` identify a memory's source but do not restrict employee-wide recall. Chat loads at most `MEMORY_LIMIT` records per category (default: five).
 
 The diagrams follow the current implementation. `memoriesUsed` in the chat response contains records actually supplied to the model, which can differ from records loaded from PostgreSQL.
 
@@ -70,41 +70,35 @@ flowchart TD
     class episodeDb,episodeDbWrite dataNode
 ```
 
-For a normal customer request, episodes created by standalone procedure instructions are excluded from initial customer lookup planning. After a tool call, the loaded episodes can be supplied for the final answer. An episode is saved only after a final response, and its outcome distinguishes real results, no matches, and tool failure. The turn ID prevents a retried save from duplicating that episode.
+Legacy episodes created by standalone procedure instructions in earlier versions are excluded from chat context. An episode is saved only after a final response, and its outcome distinguishes real results, no matches, and tool failure. The turn ID prevents a retried save from duplicating that episode.
 
-## Procedural memory: reusable instructions and preferences
+## Procedural memory: dedicated API, outside chat
 
-![Procedural memory search flowchart](images/procedural-memory-search.png)
+![Procedural memory API flowchart](images/procedural-memory-search.png)
 
 ```mermaid
 flowchart TD
-    userPrompt["User sends prompt"] --> loadNode["LangGraph: loadMemories"]
-    loadNode --> procedureDb[("PostgreSQL: procedures scoped to organization and employee")]
-    procedureDb --> recentProcedures["Memory: load most recent procedures; top 5 by default"]
-    recentProcedures --> instructionOnly{"Explicit reusable instruction in current prompt?"}
-    instructionOnly -- Yes --> instructionAgent["LLM Agent: receive procedures and answer without customer tool"]
-    instructionAgent --> upsertProcedure["Memory: upsert procedure and save episode in one transaction"]
-    instructionOnly -- No --> lookupAgent["LLM Agent: plan customer lookup without procedures"]
-    lookupAgent --> needsTool{"Customer tool called?"}
-    needsTool -- Yes --> customerTool["LangChain: execute get_customers with validated filters"]
-    customerTool --> resultAgent["LLM Agent: receive tool result and procedures for final answer"]
-    needsTool -- No --> noProcedureAgent["LLM Agent: final answer without procedures"]
-    resultAgent --> saveEpisode["Memory: save completed interaction episode"]
-    noProcedureAgent --> saveEpisode
-    upsertProcedure --> procedureResponse
-    saveEpisode --> procedureResponse["API: return response and memoriesUsed.procedural"]
-    classDef graphNode fill:#dbeafe,stroke:#2563eb,color:#172554
+    userPrompt["User wants to save or inspect a reusable instruction"] --> apiChoice{"Which endpoint?"}
+    apiChoice -->|"Save or update"| writeApi["POST /api/procedural-memories"]
+    writeApi --> writeValidate["API: validate organization, employee, user, key, instruction"]
+    writeValidate --> writeScope["Memory: use caller organization and employee scope"]
+    writeScope --> writeDb[("PostgreSQL: upsert procedural record by scoped key")]
+    writeDb --> writeResponse["API: return stored ID, content, and timestamps"]
+    apiChoice -->|"Inspect"| readApi["POST /api/memories with type procedural"]
+    readApi --> readValidate["API: validate organization, employee, user"]
+    readValidate --> readDb[("PostgreSQL: list scoped procedural records")]
+    readDb --> readResponse["API: return stored procedures"]
+    apiChoice -->|"Send to chat"| chatReject["POST /api/chat: reject with HTTP 400 and direct caller to procedural API"]
+    classDef apiNode fill:#dbeafe,stroke:#2563eb,color:#172554
     classDef memoryNode fill:#dcfce7,stroke:#16a34a,color:#14532d
-    classDef chainNode fill:#cffafe,stroke:#0891b2,color:#164e63
-    classDef agentNode fill:#fef3c7,stroke:#d97706,color:#78350f
     classDef dataNode fill:#f3e8ff,stroke:#9333ea,color:#581c87
-    class loadNode graphNode
-    class recentProcedures,upsertProcedure,saveEpisode memoryNode
-    class customerTool chainNode
-    class instructionAgent,lookupAgent,resultAgent,noProcedureAgent agentNode
-    class procedureDb dataNode
+    classDef rejectNode fill:#fee2e2,stroke:#dc2626,color:#7f1d1d
+    class writeApi,writeValidate,writeResponse,readApi,readValidate,readResponse apiNode
+    class writeScope memoryNode
+    class writeDb,readDb dataNode
+    class chatReject rejectNode
 ```
 
-Example: `Always display customer results in a table.` is saved as a procedure after a completed response. In a later customer lookup, the procedure is supplied when the agent formats the tool result. Presentation preferences are not added to `get_customers` filters. If a normal turn ends without a tool call, loaded procedures are not supplied to that turn's final model response.
+Example: send `{"key":"customer-format","instruction":"Always display customer results in a table."}` with the organization, employee, and user IDs to `POST /api/procedural-memories`. Send the same key to replace that record. The endpoint does not invoke LangGraph, LangChain, Bedrock, or `get_customers`, and `/api/chat` never loads the procedure.
 
 For requests that exercise these paths, see [Memory cURL examples](memory-curl-examples.md).

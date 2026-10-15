@@ -4,7 +4,7 @@ import type pg from 'pg';
 import { createPool, runSqlFile } from '../src/db/postgres.js';
 import { queryCustomers } from '../src/tools/get-customers.tool.js';
 import { createMemoryRepository } from '../src/memory/memory.repository.js';
-import { extractExplicitMemories, saveTurnMemories } from '../src/memory/memory.service.js';
+import { extractExplicitFacts, saveTurnMemories } from '../src/memory/memory.service.js';
 
 let pool: pg.Pool;
 beforeAll(async () => {
@@ -66,13 +66,12 @@ describe('employee memories', () => {
     expect((await repository.list(scope)).map(m => m.content)).toEqual(['Succeeded', 'Use a list', 'ABC is finance']);
   });
   it('extracts only explicit reusable user statements', () => {
-    expect(extractExplicitMemories('Remember that customer ABC belongs to healthcare')[0]?.type).toBe('semantic');
-    expect(extractExplicitMemories('Always display customer results in a table')[0]?.key).toBe('customer-format');
-    expect(extractExplicitMemories('Always display customer results as a list')[0]?.key).toBe('customer-format');
-    expect(extractExplicitMemories('Remember that customer ABC belongs to finance')[0]?.key).toBe(extractExplicitMemories('Remember that customer ABC belongs to healthcare')[0]?.key);
-    expect(extractExplicitMemories('Remember that customer ABC prefers Karachi')[0]?.key).not.toBe(extractExplicitMemories('Remember that customer ABC belongs to healthcare')[0]?.key);
-    expect(extractExplicitMemories('For this request, use a table')).toEqual([]);
-    expect(extractExplicitMemories('Get active customers')).toEqual([]);
+    expect(extractExplicitFacts('Remember that customer ABC belongs to healthcare')[0]?.type).toBe('semantic');
+    expect(extractExplicitFacts('Always display customer results in a table')).toEqual([]);
+    expect(extractExplicitFacts('Remember that customer ABC belongs to finance')[0]?.key).toBe(extractExplicitFacts('Remember that customer ABC belongs to healthcare')[0]?.key);
+    expect(extractExplicitFacts('Remember that customer ABC prefers Karachi')[0]?.key).not.toBe(extractExplicitFacts('Remember that customer ABC belongs to healthcare')[0]?.key);
+    expect(extractExplicitFacts('For this request, use a table')).toEqual([]);
+    expect(extractExplicitFacts('Get active customers')).toEqual([]);
   });
   it('keeps unrelated facts and updates equivalent facts without duplicate episodes', async () => {
     const repository = createMemoryRepository(pool);
@@ -85,11 +84,10 @@ describe('employee memories', () => {
     expect(facts.map(fact => fact.content).sort()).toEqual(['customer ABC belongs to finance', 'customer ABC prefers Karachi']);
     expect(await repository.list(scope, 'episodic')).toHaveLength(3);
   });
-  it('replaces a conflicting presentation procedure', async () => {
+  it('does not save procedures as part of chat memory persistence', async () => {
     const repository = createMemoryRepository(pool);
     const scope = { organizationId: randomUUID(), employeeId: 'e', userId: 'u', threadId: 't' };
     await saveTurnMemories(repository, scope, 'one', 'Always display customer results in a table', []);
-    await saveTurnMemories(repository, scope, 'two', 'Always display customer results as a list', []);
-    expect((await repository.list(scope, 'procedural')).map(item => item.content)).toEqual(['display customer results as a list']);
+    expect(await repository.list(scope, 'procedural')).toEqual([]);
   });
 });

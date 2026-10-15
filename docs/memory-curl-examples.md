@@ -2,7 +2,7 @@
 
 Run these requests in order after starting the app and seeding PostgreSQL. These examples use port `3001`; replace it with `3000` if you use the default `PORT`. All requests use the same organization and employee, while the recall requests use a different user and thread to demonstrate employee-level memory sharing.
 
-`POST /api/chat` saves explicit semantic and procedural memories after a completed response. It also saves an episodic memory automatically for each completed interaction. `POST /api/memories` only reads stored memories.
+`POST /api/chat` saves explicit semantic facts and an episodic memory after each completed interaction. Save or update procedural memory through `POST /api/procedural-memories`; chat does not load or apply it. `POST /api/memories` only reads stored memories.
 
 ## 1. Save a semantic fact
 
@@ -34,19 +34,22 @@ curl --location 'http://localhost:3001/api/chat' \
 
 After the response completes, its episode records the request, any executed `get_customers` filters, and the actual outcome.
 
-## 3. Save a procedural preference
+## 3. Save a procedural preference through its API
 
 ```sh
-curl --location 'http://localhost:3001/api/chat' \
+curl --location 'http://localhost:3001/api/procedural-memories' \
   --header 'Content-Type: application/json' \
   --data '{
     "organizationId": "org-001",
     "employeeId": "emp-memory-curl-demo",
     "userId": "user-001",
     "threadId": "procedure-write-001",
-    "message": "Always display customer results in a table."
+    "key": "customer-format",
+    "instruction": "Always display customer results in a table."
   }'
 ```
+
+Send the same `key` with a new `instruction` to replace this procedure for the same organization and employee. This endpoint does not call Bedrock.
 
 ## 4. Recall the semantic fact from another thread and user
 
@@ -80,7 +83,7 @@ curl --location 'http://localhost:3001/api/chat' \
 
 Look for the earlier customer search in `memoriesUsed.episodic`.
 
-## 6. Apply the procedural preference
+## 6. Verify that chat does not use the procedure
 
 ```sh
 curl --location 'http://localhost:3001/api/chat' \
@@ -94,7 +97,7 @@ curl --location 'http://localhost:3001/api/chat' \
   }'
 ```
 
-After a customer tool call, look for the saved instruction in `memoriesUsed.procedural` and check whether the final response uses a table. `memoriesUsed` shows what the model received; it does not prove which record influenced its answer.
+The chat response has only `memoriesUsed.semantic` and `memoriesUsed.episodic`. The saved procedure is not loaded, supplied to the model, or applied to this answer.
 
 ## 7. Inspect all stored memories
 

@@ -1,13 +1,16 @@
-import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import type { CustomerFilters } from '../tools/get-customers.tool.js';
 import type { Scope } from './memory.repository.js';
 import { createMemoryRepository } from './memory.repository.js';
 
-const candidate = z.object({ type: z.enum(['semantic','procedural']), key: z.string().min(2).max(150), content: z.string().min(5).max(1000) });
+const candidate = z.object({ type: z.literal('semantic'), key: z.string().min(2).max(150), content: z.string().min(5).max(1000) });
 type Execution = { name: 'get_customers'; filters: CustomerFilters; outcome: 'success' | 'empty' | 'failure'; count?: number };
 
-export function extractExplicitMemories(message: string) {
+export function isReusableProcedureInstruction(message: string): boolean {
+  return /^(?:please\s+)?(?:always\b|from now on\b|in future\b)/i.test(message.trim());
+}
+
+export function extractExplicitFacts(message: string) {
   const result: z.infer<typeof candidate>[] = [];
   const text = message.trim();
   const fact = /^(?:please\s+)?remember that\s+(.+?)[.!]?$/i.exec(text)
@@ -23,18 +26,6 @@ export function extractExplicitMemories(message: string) {
     const parsed = candidate.safeParse({ type: 'semantic', key: `${subject.toLowerCase().replace(/\s+/g, ' ')}:${aspect}`, content });
     if (parsed.success) result.push(parsed.data);
   }
-  const procedure = /^(?:please\s+)?(?:always|from now on,?\s*|in future,?\s*)(.+?)[.!]?$/i.exec(text);
-  if (procedure) {
-    const content = procedure[1]!.replace(/[.!]$/, '').trim();
-    const lower = content.toLowerCase();
-    const key = /email/.test(lower) ? 'customer-email'
-      : /table|format|display|present|show/.test(lower) ? 'customer-format'
-      : /sort|alphabet/.test(lower) ? 'customer-sort'
-      : /concise|summary|summaries/.test(lower) ? 'customer-summary'
-      : createHash('sha256').update(lower.split(/\s+/).slice(0, 4).join(' ')).digest('hex').slice(0, 20);
-    const parsed = candidate.safeParse({ type: 'procedural', key, content });
-    if (parsed.success) result.push(parsed.data);
-  }
   return result;
 }
 
@@ -47,13 +38,12 @@ export function episodeSummary(request: string, executions: Execution[]) {
 export async function saveTurnMemories(
   repository: ReturnType<typeof createMemoryRepository>, scope: Scope, turnId: string,
   message: string, executions: Execution[],
-): Promise<{ episodeSaved: true; semanticUpdates: number; proceduralUpdates: number }> {
+): Promise<{ episodeSaved: true; semanticUpdates: number }> {
   const key = `turn:${turnId}`;
-  const updates = extractExplicitMemories(message);
+  const updates = extractExplicitFacts(message);
   await repository.saveTurn(scope, key, episodeSummary(message, executions), { request: message, executions }, updates);
   return {
     episodeSaved: true,
-    semanticUpdates: updates.filter(item => item.type === 'semantic').length,
-    proceduralUpdates: updates.filter(item => item.type === 'procedural').length,
+    semanticUpdates: updates.length,
   };
 }
