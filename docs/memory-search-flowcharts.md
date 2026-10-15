@@ -6,6 +6,8 @@ The diagrams follow the current implementation. `memoriesUsed` in the chat respo
 
 ## Semantic memory: reusable facts
 
+![Semantic memory search flowchart](images/semantic-memory-search.png)
+
 ```mermaid
 flowchart TD
     userPrompt["User asks about Ahmed Khan"] --> apiScope["API validates request IDs"]
@@ -25,15 +27,21 @@ flowchart TD
     semanticEpisode --> semanticResponse
     classDef graphNode fill:#dbeafe,stroke:#2563eb,color:#172554
     classDef memoryNode fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef chainNode fill:#cffafe,stroke:#0891b2,color:#164e63
     classDef agentNode fill:#fef3c7,stroke:#d97706,color:#78350f
+    classDef dataNode fill:#f3e8ff,stroke:#9333ea,color:#581c87
     class loadNode graphNode
     class semanticRank,semanticSave,semanticEpisode memoryNode
+    class semanticContext,customerTool chainNode
     class semanticAgent,semanticFinal agentNode
+    class semanticDb dataNode
 ```
 
 Example: `Remember that Ahmed Khan works at SalesTeq in the IT industry.` saves a semantic fact after that response completes. A later thread can retrieve it when asking about Ahmed Khan. A question about the fact does not create another semantic fact.
 
 ## Episodic memory: previous interactions
+
+![Episodic memory search flowchart](images/episodic-memory-search.png)
 
 ```mermaid
 flowchart TD
@@ -52,15 +60,21 @@ flowchart TD
     episodeDbWrite --> episodeResponse["API: return response and memoriesUsed.episodic"]
     classDef graphNode fill:#dbeafe,stroke:#2563eb,color:#172554
     classDef memoryNode fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef chainNode fill:#cffafe,stroke:#0891b2,color:#164e63
     classDef agentNode fill:#fef3c7,stroke:#d97706,color:#78350f
+    classDef dataNode fill:#f3e8ff,stroke:#9333ea,color:#581c87
     class loadNode graphNode
     class episodeRank,episodeSave memoryNode
+    class planningContext,customerTool chainNode
     class episodeAgent,finalWithTool,finalWithoutTool agentNode
+    class episodeDb,episodeDbWrite dataNode
 ```
 
 For a normal customer request, episodes created by standalone procedure instructions are excluded from initial customer lookup planning. After a tool call, the loaded episodes can be supplied for the final answer. An episode is saved only after a final response, and its outcome distinguishes real results, no matches, and tool failure. The turn ID prevents a retried save from duplicating that episode.
 
 ## Procedural memory: reusable instructions and preferences
+
+![Procedural memory search flowchart](images/procedural-memory-search.png)
 
 ```mermaid
 flowchart TD
@@ -81,10 +95,14 @@ flowchart TD
     saveEpisode --> procedureResponse["API: return response and memoriesUsed.procedural"]
     classDef graphNode fill:#dbeafe,stroke:#2563eb,color:#172554
     classDef memoryNode fill:#dcfce7,stroke:#16a34a,color:#14532d
+    classDef chainNode fill:#cffafe,stroke:#0891b2,color:#164e63
     classDef agentNode fill:#fef3c7,stroke:#d97706,color:#78350f
+    classDef dataNode fill:#f3e8ff,stroke:#9333ea,color:#581c87
     class loadNode graphNode
     class recentProcedures,upsertProcedure,saveEpisode memoryNode
+    class customerTool chainNode
     class instructionAgent,lookupAgent,resultAgent,noProcedureAgent agentNode
+    class procedureDb dataNode
 ```
 
 Example: `Always display customer results in a table.` is saved as a procedure after a completed response. In a later customer lookup, the procedure is supplied when the agent formats the tool result. Presentation preferences are not added to `get_customers` filters. If a normal turn ends without a tool call, loaded procedures are not supplied to that turn's final model response.
