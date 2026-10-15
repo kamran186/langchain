@@ -172,6 +172,47 @@ describe('LangGraph and API', () => {
     expect(checkpointKey(id)).not.toBe(checkpointKey({ ...id, organizationId: 'other' }));
   });
 
+  it('accepts a preference after a tool call in the same checkpointed thread', async () => {
+    const model = {
+      bindTools: () => ({ invoke: async (messages: BaseMessage[]) => {
+        if (messages.at(-1) instanceof ToolMessage) return new AIMessage('Found Ahmed Khan');
+        return new AIMessage({ content: '', tool_calls: [{
+          name: 'get_customers', args: { name: 'Ahmed Khan' }, id: randomUUID(),
+        }] });
+      } }),
+      invoke: async (messages: BaseMessage[]) => {
+        if (messages.some(message => message instanceof ToolMessage ||
+          (message instanceof AIMessage && Boolean(message.tool_calls?.length)))) {
+          throw new Error('toolUse requires toolConfig');
+        }
+        return new AIMessage('Preference saved.');
+      },
+    } as unknown as ChatBedrockConverse;
+    const { app } = await createApp({ pool, model });
+    const id = scope();
+    await request(app).post('/api/chat').send({ ...id, message: 'Find customer Ahmed Khan' }).expect(200);
+    const result = await request(app).post('/api/chat').send({
+      ...id, message: 'Always display customer names in a table.',
+    }).expect(200);
+    expect(result.body.response).toBe('Preference saved.');
+    expect(result.body.toolCalls).toEqual([]);
+    const stored = await request(app).post('/api/memories').send({ ...id, type: 'procedural' }).expect(200);
+    expect(stored.body.memories.map((memory: { content: string }) => memory.content)).toEqual([
+      'display customer names in a table',
+    ]);
+  });
+
+  it('does not misreport a no-tool model error as unsupported tool calling', async () => {
+    const model = {
+      invoke: async () => { throw new Error('toolUse requires toolConfig'); },
+    } as unknown as ChatBedrockConverse;
+    const { app } = await createApp({ pool, model });
+    const result = await request(app).post('/api/chat').send({
+      ...scope(), message: 'Always display customer results in a table.',
+    }).expect(500);
+    expect(result.body).toEqual({ error: 'Request failed' });
+  });
+
   it('validates requests and reports health without invoking the model', async () => {
     const { app } = await createApp({ pool, model: mockModel });
     const count = prompts.length;

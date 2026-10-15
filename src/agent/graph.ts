@@ -57,7 +57,10 @@ export function createAgent(pool: pg.Pool, model: ChatBedrockConverse, memoryLim
       const instructionOnly = extractExplicitMemories(state.currentMessage).some(item => item.type === 'procedural');
       const memoriesUsed = memoriesForModel(state.loadedMemories, instructionOnly || state.toolIterations > 0);
       const context = memoryMessage(memoriesUsed);
-      const prompt = [system, ...(context ? [context] : []), ...state.messages.slice(-20)];
+      const history = state.messages.slice(-20);
+      const conversation = instructionOnly ? history.filter(message =>
+        !(message instanceof ToolMessage) && !(message instanceof AIMessage && message.tool_calls?.length)) : history;
+      const prompt = [system, ...(context ? [context] : []), ...conversation];
       try {
         const reply = instructionOnly
           ? await model.invoke(prompt)
@@ -71,7 +74,7 @@ export function createAgent(pool: pg.Pool, model: ChatBedrockConverse, memoryLim
         ] };
       } catch (error) {
         const message = error instanceof Error ? error.message : '';
-        if (/tool.?use|toolconfig|tool.?call|unsupported.*tool/i.test(message)) {
+        if (!instructionOnly && /tool.?use|toolconfig|tool.?call|unsupported.*tool/i.test(message)) {
           throw new Error('Configured Bedrock Qwen model does not support Converse tool calling', { cause: error });
         }
         throw error;
