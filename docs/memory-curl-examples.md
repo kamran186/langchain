@@ -2,7 +2,7 @@
 
 Run these requests in order after starting the app and seeding PostgreSQL. These examples use port `3001`; replace it with `3000` if you use the default `PORT`. All requests use the same organization and employee, while the recall requests use a different user and thread to demonstrate employee-level memory sharing.
 
-`POST /api/chat` saves explicit semantic facts and an episodic memory after each completed interaction. Save or update procedural memory through `POST /api/procedural-memories`; chat does not load or apply it. `POST /api/memories` only reads stored memories.
+`POST /api/chat` saves explicit semantic facts and an episodic memory after each completed interaction. Save or update procedural memory through `POST /api/procedural-memories`; chat then loads it for final response presentation. `POST /api/memories` only reads stored memories.
 
 ## 1. Save a semantic fact
 
@@ -49,7 +49,7 @@ curl --location 'http://localhost:3001/api/procedural-memories' \
   }'
 ```
 
-This endpoint stores the procedure without calling Bedrock. Chat does not read or apply it.
+This endpoint stores the procedure without calling Bedrock. Chat can apply it on later turns.
 
 ## 4. Replace the procedural preference
 
@@ -64,7 +64,7 @@ curl --location 'http://localhost:3001/api/procedural-memories' \
     "userId": "user-002",
     "threadId": "procedure-update-001",
     "key": "customer-format",
-    "instruction": "Always display customer results as a numbered list."
+    "instruction": "Always add prefix Custo- with the customer Name while fetching Customers"
   }'
 ```
 
@@ -81,7 +81,7 @@ curl --location 'http://localhost:3001/api/memories' \
   }'
 ```
 
-Look for one `customer-format` record containing the newer numbered-list instruction. The `userId` in this request identifies the requester; it does not filter employee memory by the user who saved it.
+Look for one `customer-format` record containing the newer `Custo-` instruction. The `userId` in this request identifies the requester; it does not filter employee memory by the user who saved it.
 
 ## 6. Recall the semantic fact from another thread and user
 
@@ -115,7 +115,7 @@ curl --location 'http://localhost:3001/api/chat' \
 
 Look for the earlier customer search in `memoriesUsed.episodic`.
 
-## 8. Check that chat does not use the procedure
+## 8. Fetch customers with the saved procedure
 
 ```sh
 curl --location 'http://localhost:3001/api/chat' \
@@ -124,12 +124,12 @@ curl --location 'http://localhost:3001/api/chat' \
     "organizationId": "org-001",
     "employeeId": "emp-memory-curl-demo",
     "userId": "user-002",
-    "threadId": "chat-after-procedure-001",
-    "message": "Show active customers from Karachi."
+    "threadId": "procedure-read-001",
+    "message": "Fetch Customers"
   }'
 ```
 
-The chat response has only `memoriesUsed.semantic` and `memoriesUsed.episodic`; it does not contain `memoriesUsed.procedural`. The saved procedure is available through `/api/memories`, but chat does not load or apply it.
+The response includes `memoriesUsed.procedural` with the saved record. Customer names in the final response should have `Custo-` added for display, while the actual `get_customers` filters in `toolCalls` do not contain that prefix. Chat still does not create or update procedural memory; use the dedicated API for writes.
 
 ## 9. Inspect all stored memories
 

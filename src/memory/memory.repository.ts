@@ -8,7 +8,7 @@ export type Memory = {
   content: string; metadata: Record<string, unknown>; created_at: Date; updated_at: Date;
 };
 export type Memories = { semantic: Memory[]; episodic: Memory[]; procedural: Memory[] };
-export type ChatMemories = Pick<Memories, 'semantic' | 'episodic'>;
+export type ChatMemories = Memories;
 
 export function createMemoryRepository(pool: pg.Pool) {
   async function list(scope: Scope, type?: MemoryType): Promise<Memory[]> {
@@ -26,7 +26,7 @@ export function createMemoryRepository(pool: pg.Pool) {
       const rows = await pool.query<Memory>(
         `SELECT * FROM employee_memories WHERE organization_id=$1 AND employee_id=$2 AND memory_type=$3
          ORDER BY CASE WHEN $4::text <> '' THEN ts_rank(to_tsvector('simple',content),plainto_tsquery('simple',$4)) ELSE 0 END DESC,
-         created_at DESC, id DESC LIMIT $5`,
+         CASE WHEN $3='procedural' THEN updated_at ELSE created_at END DESC, id DESC LIMIT $5`,
         [scope.organizationId, scope.employeeId, type, type === 'procedural' ? '' : query, limit]);
       result[type] = rows.rows;
     }

@@ -75,7 +75,7 @@ curl -s http://localhost:3000/api/chat -H 'Content-Type: application/json' \
   -d '{"organizationId":"org-001","employeeId":"emp-001","userId":"user-001","threadId":"fact-001","message":"Remember that customer ABC belongs to healthcare"}'
 
 curl -s http://localhost:3000/api/procedural-memories -H 'Content-Type: application/json' \
-  -d '{"organizationId":"org-001","employeeId":"emp-001","userId":"user-001","threadId":"preference-001","key":"customer-format","instruction":"Always display customer results in a table"}'
+  -d '{"organizationId":"org-001","employeeId":"emp-001","userId":"user-001","threadId":"preference-001","key":"ins-1","instruction":"Always add prefix Custo- with the customer Name while fetching Customers"}'
 ```
 
 Recall from another thread and user of the same employee:
@@ -83,7 +83,12 @@ Recall from another thread and user of the same employee:
 ```sh
 curl -s http://localhost:3000/api/chat -H 'Content-Type: application/json' \
   -d '{"organizationId":"org-001","employeeId":"emp-001","userId":"user-002","threadId":"thread-002","message":"What industry is customer ABC in? Then show active customers."}'
+
+curl -s http://localhost:3000/api/chat -H 'Content-Type: application/json' \
+  -d '{"organizationId":"org-001","employeeId":"emp-001","userId":"user-002","threadId":"thread-003","message":"Fetch Customers"}'
 ```
+
+The last response should display names such as `Custo-Ahmed Khan`. Its `toolCalls` filters contain the actual database search values without the display prefix, and `memoriesUsed.procedural` lists the saved instruction supplied for final presentation.
 
 Inspect memory or check another employee's isolated view:
 
@@ -97,15 +102,15 @@ curl -s http://localhost:3000/api/memories -H 'Content-Type: application/json' \
 curl -s http://localhost:3000/health
 ```
 
-`POST /api/chat` returns the IDs, generated or supplied `threadId`, final response, actual validated tool calls, semantic and episodic `memoriesUsed` arrays, and an ordered `flow` array for inspection in Postman. Each flow entry has a one-based `step`, `stage`, `component` (`API`, `LangGraph`, `Memory`, `LangChain`, or `LLM Agent`), `status`, and optional `details`. It records request validation, thread resolution, checkpoint retrieval, memory retrieval, each LangChain model invocation and agent decision, each actual tool execution and result return, memory persistence, checkpoint persistence, and response readiness. Tool entries distinguish `success`, `empty`, and `failure`; memory entries report actual saved update counts. The flow is execution metadata, not the model's private reasoning. `memoriesUsed` lists records supplied to the model; it does not prove which records influenced its reasoning. `POST /api/memories` is an employee-wide inspection view filtered by organization and employee, not user.
+`POST /api/chat` returns the IDs, generated or supplied `threadId`, final response, actual validated tool calls, semantic, episodic, and procedural `memoriesUsed` arrays, and an ordered `flow` array for inspection in Postman. Each flow entry has a one-based `step`, `stage`, `component` (`API`, `LangGraph`, `Memory`, `LangChain`, or `LLM Agent`), `status`, and optional `details`. It records request validation, thread resolution, checkpoint retrieval, memory retrieval, each LangChain model invocation and agent decision, each actual tool execution and result return, any final presentation pass, memory persistence, checkpoint persistence, and response readiness. Tool entries distinguish `success`, `empty`, and `failure`; memory entries report actual saved update counts. The flow is execution metadata, not the model's private reasoning. `memoriesUsed` lists records supplied to the model; it does not prove which records influenced its reasoning. `POST /api/memories` is an employee-wide inspection view filtered by organization and employee, not user.
 
-`POST /api/procedural-memories` accepts `organizationId`, `employeeId`, `userId`, optional `threadId`, a stable caller-supplied `key`, and an `instruction`. It inserts or replaces that employee's procedure by key and returns the stored record. It does not invoke Bedrock or create a chat checkpoint. Read procedures and their keys with `POST /api/memories` and `"type":"procedural"`. Chat rejects reusable procedure instructions with HTTP 400 and does not load or apply stored procedures.
+`POST /api/procedural-memories` accepts `organizationId`, `employeeId`, `userId`, optional `threadId`, a stable caller-supplied `key`, and an `instruction`. It inserts or replaces that employee's procedure by key and returns the stored record. It does not invoke Bedrock or create a chat checkpoint. Read procedures and their keys with `POST /api/memories` and `"type":"procedural"`. Chat rejects requests to save reusable procedures with HTTP 400, but loads existing procedures and applies relevant ones to its final response.
 
 A statement such as “Remember that Ahmed Khan changed his company to Conture and his industry to Modeling” is a semantic fact, so `/api/chat` accepts it. An instruction about how the employee should respond in future is procedural and belongs in `/api/procedural-memories`. Inspect the stored `type` with `/api/memories`; chat also records a separate episode of each completed interaction.
 
 ## How it works
 
-The chat graph follows `START → loadMemories → agent → executeTool ↔ agent → saveMemories → END`. `executeTool` runs only on a native `get_customers` model tool call. Its organization scope comes from the validated request, never the tool schema. Chat loads semantic facts and episodes, excluding legacy procedure-instruction episodes and checkpoint turns from earlier versions. It never queries, supplies, or returns procedural memory. The model sees a maximum of 20 recent checkpointed messages plus at most five records of each chat memory category. All long-term memory queries include both organization and employee IDs.
+The chat graph follows `START → loadMemories → agent → executeTool ↔ agent → saveMemories → END`. `executeTool` runs only on a native `get_customers` model tool call. Its organization scope comes from the validated request, never the tool schema. Chat loads semantic facts, episodes, and procedures, excluding legacy procedure-instruction episodes and checkpoint turns from earlier versions. The tool-decision model sees semantic facts and episodes; when it has a final draft, a separate call on the same Qwen model applies retrieved procedures to presentation only. This keeps display preferences out of tool filters. The model sees a maximum of 20 recent checkpointed messages plus at most five records of each memory category. All long-term memory queries include both organization and employee IDs.
 
 After a final chat response, the service writes a deterministic episode from the actual request and tool execution evidence. It stores semantic facts only from explicit `Remember that ...` or customer-fact statements. These conservative rules avoid promoting tool data or model guesses into permanent facts. A temporary request instruction is left in the conversation only. Stable keys update equivalent semantic facts in the same employee scope. The originating user and thread are recorded for inspection but do not restrict recall.
 

@@ -38,4 +38,24 @@ describe('configured Bedrock Qwen', () => {
       expect(result.body.flow.at(-1)).toMatchObject({ stage: 'response_ready', status: 'completed' });
     } finally { await pool.end(); }
   });
+  it('applies a saved customer display procedure after fetching real records', async () => {
+    const env = loadEnv();
+    const url = process.env.TEST_DATABASE_URL ?? 'postgresql://postgres:postgres@localhost:5432/langgraph_memory_test';
+    if (url === env.DATABASE_URL || !url.endsWith('/langgraph_memory_test')) throw new Error('Unsafe test database URL');
+    const pool = createPool(url);
+    try {
+      await runSqlFile(pool, 'schema'); await runSqlFile(pool, 'seed');
+      const { app } = await createApp({ pool, model: createModel(env), env });
+      const ids = { organizationId: 'org-001', employeeId: randomUUID(), userId: 'live-test', threadId: randomUUID() };
+      await request(app).post('/api/procedural-memories').send({ ...ids, key: 'ins-1',
+        instruction: 'Always add prefix Custo- with the customer Name while fetching Customers',
+      }).expect(200);
+      const result = await request(app).post('/api/chat').send({ ...ids, message: 'Fetch Customers' }).expect(200);
+      expect(result.body.toolCalls.some((call: { name: string }) => call.name === 'get_customers')).toBe(true);
+      expect(result.body.toolCalls.every((call: { filters: { name?: string } }) =>
+        !call.filters.name?.includes('Custo-'))).toBe(true);
+      expect(result.body.memoriesUsed.procedural).toHaveLength(1);
+      expect(result.body.response).toContain('Custo-Ahmed Khan');
+    } finally { await pool.end(); }
+  });
 });

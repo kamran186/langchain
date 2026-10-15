@@ -13,7 +13,12 @@ const prompts: BaseMessage[][] = [];
 const mockModel = {
   invoke: async (messages: BaseMessage[]) => {
     prompts.push(messages);
-    return new AIMessage('Acknowledged');
+    const input = JSON.parse(String(messages.at(-1)?.content)) as { draftAnswer: string; preferences: { content: string }[] };
+    if (input.preferences.some(preference => /table/i.test(preference.content)) && input.draftAnswer.startsWith('Customers: ')) {
+      const names = input.draftAnswer.slice('Customers: '.length).split(', ');
+      return new AIMessage(`| Customer |\n|---|\n${names.map(name => `| ${name} |`).join('\n')}`);
+    }
+    return new AIMessage(input.draftAnswer);
   },
   bindTools: () => ({ invoke: async (messages: BaseMessage[]) => {
     prompts.push(messages);
@@ -61,7 +66,7 @@ describe('LangGraph and API', () => {
     expect(result.body.response).toContain('Ahmed Khan');
     expect(result.body.response).not.toContain('Sara Ahmed');
     expect(prompts.at(-1)?.at(-1)).toBeInstanceOf(ToolMessage);
-    expect(result.body.memoriesUsed).toEqual({ semantic: [], episodic: [] });
+    expect(result.body.memoriesUsed).toEqual({ semantic: [], episodic: [], procedural: [] });
     expect(result.body.flow.map((event: { stage: string }) => event.stage)).toEqual([
       'request_validated', 'thread_resolved', 'checkpoint_restored', 'memories_loaded',
       'model_invoked', 'agent_response', 'tool_executed', 'tool_result_returned',
@@ -77,7 +82,7 @@ describe('LangGraph and API', () => {
     expect(result.body.flow[7]).toMatchObject({ component: 'LangGraph', details: { resultType: 'success' } });
   });
 
-  it('learns semantic memory in chat while procedural memory stays outside chat', async () => {
+  it('learns semantic memory in chat and applies a procedure saved through its API', async () => {
     const { app } = await createApp({ pool, model: mockModel });
     const id = scope();
     const learned = await request(app).post('/api/chat').send({ ...id, message: 'Remember that customer ABC belongs to healthcare' }).expect(200);
@@ -92,8 +97,9 @@ describe('LangGraph and API', () => {
     const restarted = await createApp({ pool, model: mockModel });
     const next = await request(restarted.app).post('/api/chat').send({ ...id, threadId: randomUUID(), userId: 'another-user', message: 'Get customers from Karachi' }).expect(200);
     expect(next.body.memoriesUsed.semantic.some((m: { content: string }) => m.content.includes('healthcare'))).toBe(true);
-    expect(next.body.memoriesUsed).not.toHaveProperty('procedural');
-    expect(next.body.response).toBe('Customers: Ahmed Khan, Bilal Shah');
+    expect(next.body.memoriesUsed.procedural).toHaveLength(1);
+    expect(next.body.memoriesUsed.procedural[0].content).toContain('table');
+    expect(next.body.response).toBe('| Customer |\n|---|\n| Ahmed Khan |\n| Bilal Shah |');
     expect(next.body.flow[2]).toMatchObject({ details: { previousMessageCount: 0 } });
     expect(next.body.flow[3].details.counts.semantic).toBeGreaterThan(0);
     const inspect = await request(app).post('/api/memories').send({ ...id, userId: 'another-user' }).expect(200);
@@ -121,8 +127,9 @@ describe('LangGraph and API', () => {
     ]);
   });
 
-  it('keeps saved procedures out of every customer model prompt', async () => {
+  it('applies a saved name prefix only after customer filters and tool results', async () => {
     const modelPrompts: BaseMessage[][] = [];
+    const presentationPrompts: BaseMessage[][] = [];
     const prefixModel = {
       bindTools: () => ({ invoke: async (messages: BaseMessage[]) => {
         modelPrompts.push(messages);
@@ -136,6 +143,12 @@ describe('LangGraph and API', () => {
           name: 'get_customers', args: { name: procedureSeen ? 'Test-Ahmed Khan' : 'Ahmed Khan' }, id: randomUUID(),
         }] });
       } }),
+      invoke: async (messages: BaseMessage[]) => {
+        presentationPrompts.push(messages);
+        const input = JSON.parse(String(messages.at(-1)?.content)) as { draftAnswer: string; preferences: { content: string }[] };
+        return new AIMessage(input.preferences.some(preference => preference.content.includes('Test-'))
+          ? input.draftAnswer.replaceAll('Ahmed Khan', 'Test-Ahmed Khan') : input.draftAnswer);
+      },
     } as unknown as ChatBedrockConverse;
     const { app, agent } = await createApp({ pool, model: prefixModel });
     const id = scope();
@@ -150,9 +163,53 @@ describe('LangGraph and API', () => {
     }).expect(200);
     expect(modelPrompts.every(messages => messages.every(message => !String(message.content).includes('Test-')))).toBe(true);
     expect(result.body.toolCalls).toEqual([{ name: 'get_customers', filters: { name: 'Ahmed Khan' } }]);
-    expect(result.body.response).toBe('Ahmed Khan');
-    expect(result.body.memoriesUsed).not.toHaveProperty('procedural');
+    expect(result.body.response).toBe('Test-Ahmed Khan');
+    expect(presentationPrompts).toHaveLength(1);
+    expect(result.body.memoriesUsed.procedural).toHaveLength(1);
     expect(result.body.memoriesUsed.episodic).toEqual([]);
+  });
+
+  it('uses the stored Custo- procedure for Fetch Customers across users without changing database filters', async () => {
+    const model = {
+      bindTools: () => ({ invoke: async (messages: BaseMessage[]) => {
+        const last = messages.at(-1)!;
+        if (last instanceof ToolMessage) {
+          const result = JSON.parse(String(last.content)) as { records: { name: string }[] };
+          return new AIMessage(`Customers: ${result.records.map(record => record.name).join(', ')}`);
+        }
+        return new AIMessage({ content: '', tool_calls: [{ name: 'get_customers', args: {}, id: randomUUID() }] });
+      } }),
+      invoke: async (messages: BaseMessage[]) => {
+        const input = JSON.parse(String(messages.at(-1)?.content)) as { draftAnswer: string; preferences: { content: string }[] };
+        if (!input.preferences.some(preference => preference.content.includes('Custo-'))) return new AIMessage(input.draftAnswer);
+        return new AIMessage(input.draftAnswer.replaceAll('Ahmed Khan', 'Custo-Ahmed Khan')
+          .replaceAll('Ayesha Ali', 'Custo-Ayesha Ali').replaceAll('Bilal Shah', 'Custo-Bilal Shah'));
+      },
+    } as unknown as ChatBedrockConverse;
+    const { app } = await createApp({ pool, model });
+    const id = scope();
+    await request(app).post('/api/procedural-memories').send({ ...id, key: 'ins-1',
+      instruction: 'Always add prefix Custo- with the customer Name while fetching Customers',
+    }).expect(200);
+    const result = await request(app).post('/api/chat').send({
+      ...id, userId: 'user-002', threadId: randomUUID(), message: 'Fetch Customers',
+    }).expect(200);
+    expect(result.body.toolCalls).toEqual([{ name: 'get_customers', filters: {} }]);
+    expect(result.body.response).toContain('Custo-Ahmed Khan');
+    expect(result.body.response).toContain('Custo-Ayesha Ali');
+    expect(result.body.memoriesUsed.procedural).toMatchObject([{
+      content: 'Always add prefix Custo- with the customer Name while fetching Customers',
+    }]);
+    const otherEmployee = await request(app).post('/api/chat').send({
+      ...id, employeeId: randomUUID(), threadId: randomUUID(), message: 'Fetch Customers',
+    }).expect(200);
+    expect(otherEmployee.body.memoriesUsed.procedural).toEqual([]);
+    expect(otherEmployee.body.response).not.toContain('Custo-');
+    const otherOrganization = await request(app).post('/api/chat').send({
+      ...id, organizationId: 'org-002', threadId: randomUUID(), message: 'Fetch Customers',
+    }).expect(200);
+    expect(otherOrganization.body.memoriesUsed.procedural).toEqual([]);
+    expect(otherOrganization.body.response).not.toContain('Custo-');
   });
 
   it('omits older procedure instruction turns from restored chat history', async () => {
