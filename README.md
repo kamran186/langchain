@@ -49,6 +49,8 @@ On Windows PowerShell, use `Copy-Item .env.example .env` instead of `cp .env.exa
 
 ## API examples
 
+For a complete sequence that saves and recalls all three memory types, see [Memory cURL examples](docs/memory-curl-examples.md).
+
 The IDs are caller supplied and preserved. This unauthenticated POC trusts the caller for identity; it does not provide authorization. Omit `threadId` to generate and return a new one.
 
 Search customers:
