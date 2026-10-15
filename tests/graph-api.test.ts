@@ -96,6 +96,55 @@ describe('LangGraph and API', () => {
     expect(isolated.body.memories).toEqual([]);
   });
 
+  it('saves a presentation preference without searching for the display name', async () => {
+    const confusedModel = {
+      bindTools: () => ({ invoke: async (messages: BaseMessage[]) => {
+        if (messages.at(-1) instanceof ToolMessage) return new AIMessage('No customers found.');
+        return new AIMessage({ content: '', tool_calls: [{
+          name: 'get_customers', args: { name: 'Test-Ahmed Khan' }, id: randomUUID(),
+        }] });
+      } }),
+    } as unknown as ChatBedrockConverse;
+    const { app, agent } = await createApp({ pool, model: confusedModel });
+    const id = scope();
+    await agent.repository.upsert(id, 'semantic', 'known-fact', 'Ahmed Khan belongs to healthcare');
+    const result = await request(app).post('/api/chat').send({
+      ...id, message: 'Always display customer names with Test- before each name in customer results.',
+    }).expect(200);
+    expect(result.body.toolCalls).toEqual([]);
+    expect(result.body.memoriesUsed).toEqual({ semantic: [], episodic: [], procedural: [] });
+    expect(result.body.response).toContain('preference');
+    const stored = await request(app).post('/api/memories').send({ ...id, type: 'procedural' }).expect(200);
+    expect(stored.body.memories.map((memory: { content: string }) => memory.content)).toEqual([
+      'display customer names with Test- before each name in customer results',
+    ]);
+  });
+
+  it('keeps a remembered display prefix out of later customer filters', async () => {
+    const prefixModel = {
+      bindTools: () => ({ invoke: async (messages: BaseMessage[]) => {
+        const last = messages.at(-1)!;
+        if (last instanceof ToolMessage) {
+          const result = JSON.parse(String(last.content)) as { records: { name: string }[] };
+          return new AIMessage(result.records.map(row => row.name).join(', ') || 'No customers found.');
+        }
+        return new AIMessage({ content: '', tool_calls: [{
+          name: 'get_customers', args: { name: 'Test-Ahmed Khan' }, id: randomUUID(),
+        }] });
+      } }),
+    } as unknown as ChatBedrockConverse;
+    const { app } = await createApp({ pool, model: prefixModel });
+    const id = scope();
+    await request(app).post('/api/chat').send({
+      ...id, message: 'Always display customer names with Test- before each name in customer results.',
+    }).expect(200);
+    const result = await request(app).post('/api/chat').send({
+      ...id, threadId: randomUUID(), message: 'Find customer Ahmed Khan',
+    }).expect(200);
+    expect(result.body.toolCalls).toEqual([{ name: 'get_customers', filters: { name: 'Ahmed Khan' } }]);
+    expect(result.body.response).toBe('Ahmed Khan');
+  });
+
   it('restores conversation checkpoints with a new app instance and isolates user and thread', async () => {
     const id = scope();
     const first = await createApp({ pool, model: mockModel });
