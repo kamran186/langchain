@@ -49,9 +49,41 @@ curl --location 'http://localhost:3001/api/procedural-memories' \
   }'
 ```
 
-Send the same `key` with a new `instruction` to replace this procedure for the same organization and employee. This endpoint does not call Bedrock.
+This endpoint stores the procedure without calling Bedrock. Chat does not read or apply it.
 
-## 4. Recall the semantic fact from another thread and user
+## 4. Replace the procedural preference
+
+Use the same organization, employee, and `key`. The newer instruction replaces the earlier table preference rather than creating another procedure.
+
+```sh
+curl --location 'http://localhost:3001/api/procedural-memories' \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "organizationId": "org-001",
+    "employeeId": "emp-memory-curl-demo",
+    "userId": "user-002",
+    "threadId": "procedure-update-001",
+    "key": "customer-format",
+    "instruction": "Always display customer results as a numbered list."
+  }'
+```
+
+## 5. Inspect the stored procedural memory
+
+```sh
+curl --location 'http://localhost:3001/api/memories' \
+  --header 'Content-Type: application/json' \
+  --data '{
+    "organizationId": "org-001",
+    "employeeId": "emp-memory-curl-demo",
+    "userId": "user-002",
+    "type": "procedural"
+  }'
+```
+
+Look for one `customer-format` record containing the newer numbered-list instruction. The `userId` in this request identifies the requester; it does not filter employee memory by the user who saved it.
+
+## 6. Recall the semantic fact from another thread and user
 
 ```sh
 curl --location 'http://localhost:3001/api/chat' \
@@ -67,7 +99,7 @@ curl --location 'http://localhost:3001/api/chat' \
 
 Look for the saved fact in `memoriesUsed.semantic`.
 
-## 5. Recall the previous search episode
+## 7. Recall the previous search episode
 
 ```sh
 curl --location 'http://localhost:3001/api/chat' \
@@ -83,7 +115,7 @@ curl --location 'http://localhost:3001/api/chat' \
 
 Look for the earlier customer search in `memoriesUsed.episodic`.
 
-## 6. Verify that chat does not use the procedure
+## 8. Check that chat does not use the procedure
 
 ```sh
 curl --location 'http://localhost:3001/api/chat' \
@@ -92,14 +124,14 @@ curl --location 'http://localhost:3001/api/chat' \
     "organizationId": "org-001",
     "employeeId": "emp-memory-curl-demo",
     "userId": "user-002",
-    "threadId": "procedure-read-001",
+    "threadId": "chat-after-procedure-001",
     "message": "Show active customers from Karachi."
   }'
 ```
 
-The chat response has only `memoriesUsed.semantic` and `memoriesUsed.episodic`. The saved procedure is not loaded, supplied to the model, or applied to this answer.
+The chat response has only `memoriesUsed.semantic` and `memoriesUsed.episodic`; it does not contain `memoriesUsed.procedural`. The saved procedure is available through `/api/memories`, but chat does not load or apply it.
 
-## 7. Inspect all stored memories
+## 9. Inspect all stored memories
 
 ```sh
 curl --location 'http://localhost:3001/api/memories' \
@@ -111,7 +143,7 @@ curl --location 'http://localhost:3001/api/memories' \
   }'
 ```
 
-To inspect one category at a time, use the optional `type` field:
+To inspect semantic or episodic records separately, use the optional `type` field. The procedural example in step 5 uses the same filter.
 
 ```sh
 curl --location 'http://localhost:3001/api/memories' \
@@ -121,8 +153,4 @@ curl --location 'http://localhost:3001/api/memories' \
 curl --location 'http://localhost:3001/api/memories' \
   --header 'Content-Type: application/json' \
   --data '{"organizationId":"org-001","employeeId":"emp-memory-curl-demo","userId":"user-002","type":"episodic"}'
-
-curl --location 'http://localhost:3001/api/memories' \
-  --header 'Content-Type: application/json' \
-  --data '{"organizationId":"org-001","employeeId":"emp-memory-curl-demo","userId":"user-002","type":"procedural"}'
 ```
