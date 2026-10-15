@@ -11,6 +11,10 @@ import { checkpointKey } from '../src/agent/graph.js';
 let pool: pg.Pool;
 const prompts: BaseMessage[][] = [];
 const mockModel = {
+  invoke: async (messages: BaseMessage[]) => {
+    prompts.push(messages);
+    return new AIMessage('Acknowledged');
+  },
   bindTools: () => ({ invoke: async (messages: BaseMessage[]) => {
     prompts.push(messages);
     const last = messages.at(-1)!;
@@ -98,6 +102,7 @@ describe('LangGraph and API', () => {
 
   it('saves a presentation preference without searching for the display name', async () => {
     const confusedModel = {
+      invoke: async () => new AIMessage('Understood. I can apply that preference.'),
       bindTools: () => ({ invoke: async (messages: BaseMessage[]) => {
         if (messages.at(-1) instanceof ToolMessage) return new AIMessage('No customers found.');
         return new AIMessage({ content: '', tool_calls: [{
@@ -112,15 +117,16 @@ describe('LangGraph and API', () => {
       ...id, message: 'Always display customer names with Test- before each name in customer results.',
     }).expect(200);
     expect(result.body.toolCalls).toEqual([]);
-    expect(result.body.memoriesUsed).toEqual({ semantic: [], episodic: [], procedural: [] });
-    expect(result.body.response).toContain('preference');
+    expect(result.body.memoriesUsed.semantic).toEqual([expect.objectContaining({ content: 'Ahmed Khan belongs to healthcare' })]);
+    expect(result.body.response).toBe('Understood. I can apply that preference.');
     const stored = await request(app).post('/api/memories').send({ ...id, type: 'procedural' }).expect(200);
     expect(stored.body.memories.map((memory: { content: string }) => memory.content)).toEqual([
       'display customer names with Test- before each name in customer results',
     ]);
   });
 
-  it('keeps a remembered display prefix out of later customer filters', async () => {
+  it('keeps presentation memories out of customer tool planning', async () => {
+    let planningPrompt: BaseMessage[] = [];
     const prefixModel = {
       bindTools: () => ({ invoke: async (messages: BaseMessage[]) => {
         const last = messages.at(-1)!;
@@ -128,10 +134,12 @@ describe('LangGraph and API', () => {
           const result = JSON.parse(String(last.content)) as { records: { name: string }[] };
           return new AIMessage(result.records.map(row => row.name).join(', ') || 'No customers found.');
         }
+        planningPrompt = messages;
+        const procedureSeen = messages.some(message => String(message.content).includes('Test-'));
         return new AIMessage({ content: '', tool_calls: [{
-          name: 'get_customers', args: { name: 'Test-Ahmed Khan' }, id: randomUUID(),
+          name: 'get_customers', args: { name: procedureSeen ? 'Test-Ahmed Khan' : 'Ahmed Khan' }, id: randomUUID(),
         }] });
-      } }),
+      } }), invoke: async () => new AIMessage('Preference saved.'),
     } as unknown as ChatBedrockConverse;
     const { app } = await createApp({ pool, model: prefixModel });
     const id = scope();
@@ -141,6 +149,7 @@ describe('LangGraph and API', () => {
     const result = await request(app).post('/api/chat').send({
       ...id, threadId: randomUUID(), message: 'Find customer Ahmed Khan',
     }).expect(200);
+    expect(planningPrompt.some(message => String(message.content).includes('Test-'))).toBe(false);
     expect(result.body.toolCalls).toEqual([{ name: 'get_customers', filters: { name: 'Ahmed Khan' } }]);
     expect(result.body.response).toBe('Ahmed Khan');
   });

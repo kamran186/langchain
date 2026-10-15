@@ -15,6 +15,7 @@ export const AgentState = Annotation.Root({
   context: Annotation<Scope>(),
   currentMessage: Annotation<string>(),
   turnId: Annotation<string>(),
+  loadedMemories: Annotation<Memories>(),
   memoriesUsed: Annotation<Memories>(),
   executions: Annotation<ToolExecution[]>(),
   toolIterations: Annotation<number>(),
