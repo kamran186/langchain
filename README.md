@@ -2,24 +2,46 @@
 
 A TypeScript REST service with one LangGraph agent, one PostgreSQL customer tool, AWS Bedrock Qwen, PostgreSQL checkpoints, and employee-scoped semantic, episodic, and procedural memory.
 
-## Setup
+## Setup on another system
 
-Use Node.js 24 LTS, pnpm, and Docker Compose. Copy `.env.example` to `.env` and set `BEDROCK_API_KEY` to a Bedrock bearer API key with access to the configured Qwen model. The key is passed as `bedrockBearerToken`; AWS access-key credentials are not needed.
+Install Node.js 24 and Docker Compose first. This project uses pnpm 12.4.2.
+
+On your current system, commit any local changes you want to transfer, then push the branch before cloning elsewhere:
 
 ```sh
+git push -u origin codex/bedrock-employee-memory
+```
+
+On the other system, clone the branch and install dependencies:
+
+```sh
+git clone -b codex/bedrock-employee-memory https://github.com/kamran186/langchain.git
+cd langchain
+npm install -g pnpm@12.4.2
 pnpm install
+cp .env.example .env
+```
+
+Set `BEDROCK_API_KEY` in `.env` to a Bedrock bearer API key with access to the configured Qwen model. The key is passed as `bedrockBearerToken`; AWS access-key credentials are not needed. The example configuration uses port 3000 and a local PostgreSQL container.
+
+Start PostgreSQL, initialize and seed the database, and start the app:
+
+```sh
 docker compose up -d
 pnpm db:init
 pnpm db:seed
 pnpm dev
 ```
 
-In another terminal:
+In another terminal, check the app and run the tests:
 
 ```sh
+curl http://localhost:3000/health
 pnpm test
 pnpm typecheck
 ```
+
+On Windows PowerShell, use `Copy-Item .env.example .env` instead of `cp .env.example .env`. If port 3000 is in use, set `PORT=3001` in `.env` and use port 3001 in the health check and API examples.
 
 `pnpm test` uses `langgraph_memory_test`, a separate database created by the Compose container on its first initialization. It refuses to run against the development database. If a PostgreSQL volume predates this project, create the test database once with `docker compose exec postgres psql -U postgres -d postgres -c 'CREATE DATABASE langgraph_memory_test'`.
 
