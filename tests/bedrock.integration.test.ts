@@ -26,6 +26,25 @@ describe('configured Bedrock Qwen', () => {
     expect(result.content.toLowerCase()).toContain('processed first');
     expect(result.content.toLowerCase()).not.toMatch(/shold|processssed|firts/);
   });
+  it('keeps the stored revive-orders procedure when the user repeats its meaning', async () => {
+    const env = loadEnv();
+    const url = process.env.TEST_DATABASE_URL ?? 'postgresql://postgres:postgres@localhost:5432/langgraph_memory_test';
+    if (url === env.DATABASE_URL || !url.endsWith('/langgraph_memory_test')) throw new Error('Unsafe test database URL');
+    const pool = createPool(url);
+    try {
+      await runSqlFile(pool, 'schema');
+      const { app } = await createApp({ pool, model: createModel(env), env });
+      const ids = { organizationId: 'org-001', employeeId: randomUUID(), userId: 'live-test' };
+      const first = await request(app).post('/api/procedural-memories').send({ ...ids,
+        key: 'order-priority', instruction: 'revive orders should be processssed firts always.',
+      }).expect(200);
+      const repeated = await request(app).post('/api/procedural-memories').send({ ...ids,
+        key: 'different-order-priority-key', instruction: 'always process revive orders first',
+      }).expect(200);
+      expect(repeated.body.status).toBe('already_exists');
+      expect(repeated.body.memory).toEqual(first.body.memory);
+    } finally { await pool.end(); }
+  });
   it('responds and emits a native get_customers call', async () => {
     const env = loadEnv();
     const model: ChatBedrockConverse = createModel(env);

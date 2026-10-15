@@ -63,6 +63,70 @@ afterAll(async () => { await pool?.end(); });
 const scope = () => ({ organizationId: 'org-001', employeeId: randomUUID(), userId: 'user-001', threadId: randomUUID() });
 
 describe('LangGraph and API', () => {
+  it('does not update a procedural memory when refined wording differs only by punctuation', async () => {
+    const ids = scope();
+    const model = {
+      invoke: async (messages: BaseMessage[]) => {
+        const input = JSON.parse(String(messages.at(-1)?.content)) as { original: string };
+        return new AIMessage(JSON.stringify({
+          content: input.original.includes('Please')
+            ? 'Always display customer names in a table!'
+            : 'Always display customer names in a table.',
+          equivalentMemoryId: null,
+        }));
+      },
+      bindTools: mockModel.bindTools,
+    } as unknown as ChatBedrockConverse;
+    const { app } = await createApp({ pool, model });
+    const first = await request(app).post('/api/procedural-memories').send({
+      ...ids, key: 'customer-format', instruction: 'Always display customer names in a table.',
+    }).expect(200);
+    const repeated = await request(app).post('/api/procedural-memories').send({
+      ...ids, userId: 'other-user', key: 'customer-format',
+      instruction: 'Please always display customer names in a table.',
+    }).expect(200);
+    expect(repeated.body.status).toBe('already_exists');
+    expect(repeated.body.memory).toEqual(first.body.memory);
+    expect(repeated.body.message).toContain(first.body.memory.content);
+    const stored = await request(app).post('/api/memories').send({ ...ids, type: 'procedural' }).expect(200);
+    expect(stored.body.memories).toHaveLength(1);
+    expect(stored.body.memories[0]).toMatchObject({
+      id: first.body.memory.id, userId: ids.userId, content: first.body.memory.content,
+      updatedAt: first.body.memory.updatedAt,
+    });
+  });
+
+  it('shows an existing semantic fact without updating it for an equivalent repeat', async () => {
+    const ids = scope();
+    const model = {
+      invoke: async (messages: BaseMessage[]) => {
+        const input = JSON.parse(String(messages.at(-1)?.content)) as { original: string };
+        return new AIMessage(JSON.stringify({
+          content: input.original.includes('employed')
+            ? 'Ahmed Khan works at SalesTeq in the IT industry!'
+            : 'Ahmed Khan works at SalesTeq in the IT industry.',
+          equivalentMemoryId: null,
+        }));
+      },
+      bindTools: mockModel.bindTools,
+    } as unknown as ChatBedrockConverse;
+    const { app } = await createApp({ pool, model });
+    await request(app).post('/api/chat').send({ ...ids,
+      message: 'Remember that Ahmed Khan works at SalesTeq in the IT industry.',
+    }).expect(200);
+    const before = await request(app).post('/api/memories').send({ ...ids, type: 'semantic' }).expect(200);
+    const existing = before.body.memories[0];
+    const repeated = await request(app).post('/api/chat').send({
+      ...ids, userId: 'other-user', threadId: randomUUID(),
+      message: 'Remember that Ahmed Khan is employed by SalesTeq in IT.',
+    }).expect(200);
+    expect(repeated.body.memoryWrite.semantic).toBe('already_exists');
+    expect(repeated.body.memoryWrite.existingMemory).toEqual({ id: existing.id, content: existing.content });
+    expect(repeated.body.response).toContain(existing.content);
+    const after = await request(app).post('/api/memories').send({ ...ids, type: 'semantic' }).expect(200);
+    expect(after.body.memories).toEqual(before.body.memories);
+  });
+
   it('stores a corrected procedural instruction and preserves the original input', async () => {
     const id = scope();
     const model = {
