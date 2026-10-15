@@ -31,7 +31,7 @@ export async function createApp(options: { pool?: pg.Pool; model?: ChatBedrockCo
       const input = chatRequest.parse(req.body);
       const scope = { organizationId: input.organizationId, employeeId: input.employeeId,
         userId: input.userId, threadId: input.threadId ?? randomUUID() };
-      const result = await agent.chat(scope, input.message);
+      const result = await agent.chat(scope, input.message, input.threadId === undefined);
       res.json({ ...scope, ...result });
     } catch (error) { handleError(error, res); }
   });

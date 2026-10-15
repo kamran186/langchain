@@ -58,18 +58,38 @@ describe('LangGraph and API', () => {
     expect(result.body.response).not.toContain('Sara Ahmed');
     expect(prompts.at(-1)?.at(-1)).toBeInstanceOf(ToolMessage);
     expect(result.body.memoriesUsed).toEqual({ semantic: [], episodic: [], procedural: [] });
+    expect(result.body.flow.map((event: { stage: string }) => event.stage)).toEqual([
+      'request_validated', 'thread_resolved', 'checkpoint_restored', 'memories_loaded',
+      'model_invoked', 'agent_response', 'tool_executed', 'tool_result_returned',
+      'model_invoked', 'agent_response', 'memories_saved',
+      'checkpoint_persisted', 'response_ready',
+    ]);
+    expect(result.body.flow.map((event: { step: number }) => event.step)).toEqual([1,2,3,4,5,6,7,8,9,10,11,12,13]);
+    expect(result.body.flow[4]).toMatchObject({ component: 'LangChain' });
+    expect(result.body.flow[5]).toMatchObject({ component: 'LLM Agent' });
+    expect(result.body.flow[6]).toMatchObject({ component: 'LangChain', status: 'success', details: {
+      name: 'get_customers', filters: { city: 'Karachi', status: 'active' }, returnedCount: 1,
+    } });
+    expect(result.body.flow[7]).toMatchObject({ component: 'LangGraph', details: { resultType: 'success' } });
   });
 
   it('learns semantic and procedural memories and applies them in another thread', async () => {
     const { app } = await createApp({ pool, model: mockModel });
     const id = scope();
-    await request(app).post('/api/chat').send({ ...id, message: 'Remember that customer ABC belongs to healthcare' }).expect(200);
+    const learned = await request(app).post('/api/chat').send({ ...id, message: 'Remember that customer ABC belongs to healthcare' }).expect(200);
+    expect(learned.body.flow.map((event: { stage: string }) => event.stage)).toEqual([
+      'request_validated', 'thread_resolved', 'checkpoint_restored', 'memories_loaded',
+      'model_invoked', 'agent_response', 'memories_saved', 'checkpoint_persisted', 'response_ready',
+    ]);
+    expect(learned.body.flow[6]).toMatchObject({ component: 'Memory', details: { episodeSaved: true, semanticUpdates: 1, proceduralUpdates: 0 } });
     await request(app).post('/api/chat').send({ ...id, message: 'Always display customer results in a table' }).expect(200);
     const restarted = await createApp({ pool, model: mockModel });
     const next = await request(restarted.app).post('/api/chat').send({ ...id, threadId: randomUUID(), userId: 'another-user', message: 'Get customers from Karachi' }).expect(200);
     expect(next.body.memoriesUsed.semantic.some((m: { content: string }) => m.content.includes('healthcare'))).toBe(true);
     expect(next.body.memoriesUsed.procedural.some((m: { content: string }) => m.content.includes('table'))).toBe(true);
     expect(next.body.response).toContain('| Customer |');
+    expect(next.body.flow[2]).toMatchObject({ details: { previousMessageCount: 0 } });
+    expect(next.body.flow[3].details.counts.semantic).toBeGreaterThan(0);
     const inspect = await request(app).post('/api/memories').send({ ...id, userId: 'another-user' }).expect(200);
     expect(inspect.body.memories.some((m: { type: string }) => m.type === 'episodic')).toBe(true);
     const isolated = await request(app).post('/api/memories').send({ ...id, employeeId: randomUUID() }).expect(200);
@@ -83,8 +103,10 @@ describe('LangGraph and API', () => {
     const restarted = await createApp({ pool, model: mockModel });
     const same = await request(restarted.app).post('/api/chat').send({ ...id, message: 'What was my prior request?' }).expect(200);
     expect(same.body.response).toContain('unique-history-');
+    expect(same.body.flow[2].details.previousMessageCount).toBeGreaterThan(0);
     const otherThread = await request(restarted.app).post('/api/chat').send({ ...id, threadId: randomUUID(), message: 'What was my prior request?' }).expect(200);
     expect(otherThread.body.response).toBe('No prior request');
+    expect(otherThread.body.flow[2]).toMatchObject({ details: { previousMessageCount: 0 } });
     const otherUser = await request(restarted.app).post('/api/chat').send({ ...id, userId: 'other', message: 'What was my prior request?' }).expect(200);
     expect(otherUser.body.response).toBe('No prior request');
     expect(checkpointKey(id)).not.toBe(checkpointKey({ ...id, userId: 'other' }));
@@ -112,9 +134,18 @@ describe('LangGraph and API', () => {
   it('records empty customer results distinctly', async () => {
     const { app } = await createApp({ pool, model: mockModel });
     const id = scope();
-    await request(app).post('/api/chat').send({ ...id, message: 'Find customers in NoSuchCity' }).expect(200);
+    const result = await request(app).post('/api/chat').send({ ...id, message: 'Find customers in NoSuchCity' }).expect(200);
+    expect(result.body.flow.find((event: { stage: string }) => event.stage === 'tool_executed')).toMatchObject({ status: 'empty', details: { returnedCount: 0, totalMatched: 0 } });
     const inspected = await request(app).post('/api/memories').send({ ...id, type: 'episodic' }).expect(200);
     expect(inspected.body.memories[0].content).toContain('empty (0 records)');
+  });
+
+  it('marks a generated thread ID in the ordered response flow', async () => {
+    const { app } = await createApp({ pool, model: mockModel });
+    const { threadId: _unused, ...withoutThread } = scope();
+    const result = await request(app).post('/api/chat').send({ ...withoutThread, message: 'Hello' }).expect(200);
+    expect(result.body.threadId).toBeTruthy();
+    expect(result.body.flow[1]).toMatchObject({ stage: 'thread_resolved', details: { generated: true } });
   });
 
   it('reports database tool failure without recording success', async () => {
@@ -129,6 +160,7 @@ describe('LangGraph and API', () => {
       const id = scope();
       const result = await request(app).post('/api/chat').send({ ...id, message: 'Get active customers from Karachi' }).expect(200);
       expect(result.body.response).toBe('Customer lookup failed.');
+      expect(result.body.flow.find((event: { stage: string }) => event.stage === 'tool_executed')).toMatchObject({ status: 'failure' });
       const inspected = await request(app).post('/api/memories').send({ ...id, type: 'episodic' }).expect(200);
       expect(inspected.body.memories[0].content).toContain('tool failure');
       expect(inspected.body.memories[0].content).not.toContain('success');

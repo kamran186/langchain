@@ -72,7 +72,7 @@ curl -s http://localhost:3000/api/memories -H 'Content-Type: application/json' \
 curl -s http://localhost:3000/health
 ```
 
-`POST /api/chat` returns the IDs, generated or supplied `threadId`, final response, actual validated tool calls, and `memoriesUsed` arrays. The latter list records supplied to the model; they do not prove which records influenced its reasoning. `POST /api/memories` is an employee-wide inspection view filtered by organization and employee, not user.
+`POST /api/chat` returns the IDs, generated or supplied `threadId`, final response, actual validated tool calls, `memoriesUsed` arrays, and an ordered `flow` array for inspection in Postman. Each flow entry has a one-based `step`, `stage`, `component` (`API`, `LangGraph`, `Memory`, `LangChain`, or `LLM Agent`), `status`, and optional `details`. It records request validation, thread resolution, checkpoint retrieval, memory retrieval, each LangChain model invocation and agent decision, each actual tool execution and result return, memory persistence, checkpoint persistence, and response readiness. Tool entries distinguish `success`, `empty`, and `failure`; memory entries report actual saved update counts. The flow is execution metadata, not the model's private reasoning. `memoriesUsed` lists records supplied to the model; it does not prove which records influenced its reasoning. `POST /api/memories` is an employee-wide inspection view filtered by organization and employee, not user.
 
 ## How it works
 

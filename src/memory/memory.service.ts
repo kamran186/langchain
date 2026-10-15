@@ -47,7 +47,13 @@ export function episodeSummary(request: string, executions: Execution[]) {
 export async function saveTurnMemories(
   repository: ReturnType<typeof createMemoryRepository>, scope: Scope, turnId: string,
   message: string, executions: Execution[],
-): Promise<void> {
+): Promise<{ episodeSaved: true; semanticUpdates: number; proceduralUpdates: number }> {
   const key = `turn:${turnId}`;
-  await repository.saveTurn(scope, key, episodeSummary(message, executions), { request: message, executions }, extractExplicitMemories(message));
+  const updates = extractExplicitMemories(message);
+  await repository.saveTurn(scope, key, episodeSummary(message, executions), { request: message, executions }, updates);
+  return {
+    episodeSaved: true,
+    semanticUpdates: updates.filter(item => item.type === 'semantic').length,
+    proceduralUpdates: updates.filter(item => item.type === 'procedural').length,
+  };
 }

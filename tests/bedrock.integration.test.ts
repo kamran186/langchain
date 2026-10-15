@@ -34,6 +34,8 @@ describe('configured Bedrock Qwen', () => {
       expect(result.body.toolCalls.some((call: { name: string }) => call.name === 'get_customers')).toBe(true);
       expect(result.body.response).toContain('Ahmed');
       expect(result.body.threadId).toBeTruthy();
+      expect(result.body.flow.map((event: { stage: string }) => event.stage)).toContain('tool_executed');
+      expect(result.body.flow.at(-1)).toMatchObject({ stage: 'response_ready', status: 'completed' });
     } finally { await pool.end(); }
   });
 });
