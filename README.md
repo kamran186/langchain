@@ -1,89 +1,85 @@
-# LangGraph DMAS API
+# LangGraph employee memory POC
 
-A Node.js API that interprets an arithmetic prompt with LangChain and Amazon Bedrock, calculates each operation with a separate tool, and explains every step with LangGraph.
-
-## Project layout
-
-| File | Responsibility |
-| --- | --- |
-| `server.js` | Small startup entry and public exports |
-| `src/runtime.js` | Bedrock model and server configuration |
-| `src/http.js` | `POST /query` and `GET /health` |
-| `src/model.js` | Prompt template and model response parsing |
-| `src/graph.js` | Interpret, calculate, explain, display, and optional action flow |
-| `src/calculator.js` | Expression validation, precedence, and step explanations |
-| `src/tools/arithmetic.js` | Four arithmetic tool definitions and LangChain wrappers |
-| `src/tools/report.js` | Display, text file, and disabled email draft tools |
-
-Every tool definition has `description`, `args` (a Zod schema), and `execute`. The arithmetic tools are `add`, `subtract`, `multiply`, and `divide`. The report tools are `display`, `saveTextFile`, and `sendMail`. `sendMail` creates a draft only; delivery is disabled.
-
-```js
-import { arithmeticTools, langChainTools } from "./server.js";
-
-console.log(arithmeticTools.add.description);
-console.log(await langChainTools.add.invoke({ a: 5, b: 7 })); // 12
-```
+A TypeScript REST service with one LangGraph agent, one PostgreSQL customer tool, AWS Bedrock Qwen, PostgreSQL checkpoints, and employee-scoped semantic, episodic, and procedural memory.
 
 ## Setup
 
-Requires Node.js 20 or newer and a Bedrock API key with access to the configured model.
+Use Node.js 24 LTS, pnpm, and Docker Compose. Copy `.env.example` to `.env` and set `BEDROCK_API_KEY` to a Bedrock bearer API key with access to the configured Qwen model. The key is passed as `bedrockBearerToken`; AWS access-key credentials are not needed.
 
 ```sh
-npm install
-cp .env.example .env
+pnpm install
+docker compose up -d
+pnpm db:init
+pnpm db:seed
+pnpm dev
 ```
 
-Set `BEDROCK_API_KEY` in `.env`, then start the server:
+In another terminal:
 
 ```sh
-npm start
+pnpm test
+pnpm typecheck
 ```
 
-The defaults are `BEDROCK_REGION=us-east-1`, `BEDROCK_MODEL=qwen.qwen3-vl-235b-a22b`, `HOST=127.0.0.1`, and `PORT=3000`. `REPORTS_DIR` selects the directory for requested text files; its default is `reports/`.
+`pnpm test` uses `langgraph_memory_test`, a separate database created by the Compose container on its first initialization. It refuses to run against the development database. If a PostgreSQL volume predates this project, create the test database once with `docker compose exec postgres psql -U postgres -d postgres -c 'CREATE DATABASE langgraph_memory_test'`.
 
-## Query API
+`pnpm test:bedrock` is a separate live test that invokes the configured Qwen model with the native customer tool schema. It requires a valid Bedrock key and is excluded from `pnpm test`.
 
-Send a JSON body to `POST /query`:
+## API examples
+
+The IDs are caller supplied and preserved. This unauthenticated POC trusts the caller for identity; it does not provide authorization. Omit `threadId` to generate and return a new one.
+
+Search customers:
 
 ```sh
-curl -X POST http://localhost:3000/query \
-  -H 'Content-Type: application/json' \
-  -d '{"prompt":"Add 5 and 7, then multiply by 2"}'
+curl -s http://localhost:3000/api/chat -H 'Content-Type: application/json' \
+  -d '{"organizationId":"org-001","employeeId":"emp-001","userId":"user-001","threadId":"thread-001","message":"Get all active customers from Karachi"}'
 ```
 
-```json
-{
-  "expression": "(5+7)*2",
-  "result": 24,
-  "steps": [
-    {"a": 5, "b": 7, "operation": "add", "result": 12},
-    {"a": 12, "b": 2, "operation": "multiply", "result": 24}
-  ],
-  "explanation": "First, 5 + 7 = 12. Then, 12 * 2 = 24. The final result is 24.",
-  "display": "Prompt: Add 5 and 7, then multiply by 2\nExpression: (5+7)*2\nSteps:\n1. 5 + 7 = 12\n2. 12 * 2 = 24\nResult: 24\nExplanation: First, 5 + 7 = 12. Then, 12 * 2 = 24. The final result is 24.\n"
-}
+Continue the same conversation:
+
+```sh
+curl -s http://localhost:3000/api/chat -H 'Content-Type: application/json' \
+  -d '{"organizationId":"org-001","employeeId":"emp-001","userId":"user-001","threadId":"thread-001","message":"Which of those customers have email addresses?"}'
 ```
 
-A request with one operation also includes `operation`, `a`, and `b` instead of `expression`. Standard arithmetic precedence applies. Parentheses preserve grouping. Prompts must contain at least two numeric values, and the interpreted expression must use each exactly once. Invalid arithmetic and division by zero return an `error` response.
+Teach a semantic fact and an explicit reusable procedure:
 
-### Optional actions
+```sh
+curl -s http://localhost:3000/api/chat -H 'Content-Type: application/json' \
+  -d '{"organizationId":"org-001","employeeId":"emp-001","userId":"user-001","threadId":"fact-001","message":"Remember that customer ABC belongs to healthcare"}'
 
-Optional actions run only when explicitly requested in the JSON body:
-
-```json
-{
-  "prompt": "Add 5 and 7, then multiply by 2",
-  "saveTextFile": true,
-  "emailTo": "recipient@example.com"
-}
+curl -s http://localhost:3000/api/chat -H 'Content-Type: application/json' \
+  -d '{"organizationId":"org-001","employeeId":"emp-001","userId":"user-001","threadId":"preference-001","message":"Always display customer results in a table"}'
 ```
 
-- `saveTextFile: true` saves the prompt, expression, steps, result, and explanation to a new text file. The response contains `file: { "status": "saved", "path": "..." }`.
-- `emailTo` creates an email draft containing the same report. The response contains `email: { "status": "disabled", "draft": { "to": "...", "subject": "DMAS calculation result", "text": "..." } }`. No email is sent.
+Recall from another thread and user of the same employee:
 
-The two options can be used together. A file save error is reported in the `file` field, while the calculation remains available in the response. `GET /health` returns `{"status":"ok"}`.
+```sh
+curl -s http://localhost:3000/api/chat -H 'Content-Type: application/json' \
+  -d '{"organizationId":"org-001","employeeId":"emp-001","userId":"user-002","threadId":"thread-002","message":"What industry is customer ABC in? Then show active customers."}'
+```
 
-Run `npm test` to verify calculations, graph flow, and API behavior with a mock model. The tests do not need a Bedrock key.
+Inspect memory or check another employee's isolated view:
 
-This prototype uses the supplied model ID through Bedrock Converse. Calling an existing Bedrock Agent would require its agent ID, alias ID, and AWS credentials instead of this model configuration.
-# langchain
+```sh
+curl -s http://localhost:3000/api/memories -H 'Content-Type: application/json' \
+  -d '{"organizationId":"org-001","employeeId":"emp-001","userId":"user-002"}'
+
+curl -s http://localhost:3000/api/memories -H 'Content-Type: application/json' \
+  -d '{"organizationId":"org-001","employeeId":"emp-002","userId":"user-002"}'
+
+curl -s http://localhost:3000/health
+```
+
+`POST /api/chat` returns the IDs, generated or supplied `threadId`, final response, actual validated tool calls, and `memoriesUsed` arrays. The latter list records supplied to the model; they do not prove which records influenced its reasoning. `POST /api/memories` is an employee-wide inspection view filtered by organization and employee, not user.
+
+## How it works
+
+The graph follows `START → loadMemories → agent → executeTool ↔ agent → saveMemories → END`. `executeTool` runs only on a native `get_customers` model tool call. Its organization scope comes from the validated request, never the tool schema. The model sees a maximum of 20 recent checkpointed messages plus at most five records of each memory category. All long-term memory queries include both organization and employee IDs.
+
+After a final response, the service writes a deterministic episode from the actual request and tool execution evidence. It stores semantic facts only from explicit `Remember that ...` or customer-fact statements, and procedures only from explicit reusable `Always ...`, `From now on ...`, or `In future ...` instructions. These conservative rules avoid promoting tool data or model guesses into permanent facts. A temporary request instruction is left in the conversation only. Stable keys update an earlier fact or preference in the same employee scope. The originating user and thread are recorded for inspection but do not restrict recall.
+
+PostgreSQL checkpoints use a SHA-256 key of the exact organization, employee, user, and thread tuple. The original identifiers remain unchanged in responses and memory records. The `PostgresSaver` creates and migrates its own checkpoint tables during startup.
+
+The service contains exactly three endpoints: `GET /health`, `POST /api/chat`, and `POST /api/memories`. It has no authentication because the request contract is intentionally an unauthenticated POC.
