@@ -7,11 +7,20 @@ const candidate = z.object({ type: z.literal('semantic'), key: z.string().min(2)
 type Execution = { name: 'get_customers'; filters: CustomerFilters; outcome: 'success' | 'empty' | 'failure'; count?: number };
 
 export function isReusableProcedureInstruction(message: string): boolean {
-  return /^(?:please\s+)?(?:always\b|from now on\b|in future\b)/i.test(message.trim());
+  const text = message.trim().replace(/\s+/g, ' ');
+  const action = '(?:display|show|present|format|include|sort|prefix|prepend|append|respond|answer|use|write|return|list|name|put)';
+  const future = '(?:from now on|going forward|in (?:the )?future|for future|permanently|by default)';
+  const persistentBehavior = new RegExp(`\\balways\\s+${action}\\b|\\b(?:whenever|every time)\\s+you\\s+${action}\\b|\\b${future}\\b.{0,100}\\b${action}\\b|\\b${action}\\b.{0,100}\\b${future}\\b`, 'i');
+  return /\bprocedural memor(?:y|ies)\b/i.test(text)
+    || /\b(?:save|store|add|set|update|change|remember|keep|learn)\b.{0,100}\b(?:preference|instruction|rule|default)\b/i.test(text)
+    || /\bremember\s+to\b/i.test(text)
+    || /\bremember that\b.{0,150}\b(?:should|must|need to)\b/i.test(text)
+    || persistentBehavior.test(text);
 }
 
 export function extractExplicitFacts(message: string) {
   const result: z.infer<typeof candidate>[] = [];
+  if (isReusableProcedureInstruction(message)) return result;
   const text = message.trim();
   const fact = /^(?:please\s+)?remember that\s+(.+?)[.!]?$/i.exec(text)
     ?? /^(customer\s+.+?\s+(?:belongs to|prefers|is|has)\s+.+?)[.!]?$/i.exec(text);
@@ -38,7 +47,8 @@ export function episodeSummary(request: string, executions: Execution[]) {
 export async function saveTurnMemories(
   repository: ReturnType<typeof createMemoryRepository>, scope: Scope, turnId: string,
   message: string, executions: Execution[],
-): Promise<{ episodeSaved: true; semanticUpdates: number }> {
+): Promise<{ episodeSaved: boolean; semanticUpdates: number }> {
+  if (isReusableProcedureInstruction(message)) return { episodeSaved: false, semanticUpdates: 0 };
   const key = `turn:${turnId}`;
   const updates = extractExplicitFacts(message);
   await repository.saveTurn(scope, key, episodeSummary(message, executions), { request: message, executions }, updates);

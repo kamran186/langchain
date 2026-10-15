@@ -219,12 +219,30 @@ describe('LangGraph and API', () => {
     } as unknown as ChatBedrockConverse;
     const { app } = await createApp({ pool, model });
     const id = scope();
-    const result = await request(app).post('/api/chat').send({
-      ...id, message: 'Always display customer results in a table.',
-    }).expect(400);
-    expect(result.body).toEqual({ error: 'Use POST /api/procedural-memories for reusable instructions' });
+    for (const message of [
+      'Always display customer results in a table.',
+      'Save this as procedural memory: display customer names with a prefix.',
+      'Remember that customer names should be prefixed with Test-.',
+      'Whenever you show customers, prefix their names.',
+      'Please remember to display customer names with a prefix.',
+    ]) {
+      const result = await request(app).post('/api/chat').send({ ...id, message }).expect(400);
+      expect(result.body).toEqual({ error: 'Use POST /api/procedural-memories for reusable instructions' });
+    }
     const stored = await request(app).post('/api/memories').send(id).expect(200);
     expect(stored.body.memories).toEqual([]);
+  });
+
+  it('keeps a user-provided company and industry change as semantic rather than procedural memory', async () => {
+    const { app } = await createApp({ pool, model: mockModel });
+    const id = scope();
+    const message = 'Remember that Ahmed Khan changed his company to Conture and changed his indudtry to Modeling.';
+    const result = await request(app).post('/api/chat').send({ ...id, message }).expect(200);
+    expect(result.body.flow.find((event: { stage: string }) => event.stage === 'memories_saved')?.details.semanticUpdates).toBe(1);
+    const stored = await request(app).post('/api/memories').send(id).expect(200);
+    expect(stored.body.memories.some((memory: { type: string; content: string }) =>
+      memory.type === 'semantic' && memory.content.includes('Conture'))).toBe(true);
+    expect(stored.body.memories.some((memory: { type: string }) => memory.type === 'procedural')).toBe(false);
   });
 
   it('updates a procedure by key and isolates it by organization and employee', async () => {

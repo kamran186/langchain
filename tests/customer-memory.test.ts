@@ -4,7 +4,7 @@ import type pg from 'pg';
 import { createPool, runSqlFile } from '../src/db/postgres.js';
 import { queryCustomers } from '../src/tools/get-customers.tool.js';
 import { createMemoryRepository } from '../src/memory/memory.repository.js';
-import { extractExplicitFacts, saveTurnMemories } from '../src/memory/memory.service.js';
+import { extractExplicitFacts, isReusableProcedureInstruction, saveTurnMemories } from '../src/memory/memory.service.js';
 
 let pool: pg.Pool;
 beforeAll(async () => {
@@ -72,6 +72,12 @@ describe('employee memories', () => {
     expect(extractExplicitFacts('Remember that customer ABC prefers Karachi')[0]?.key).not.toBe(extractExplicitFacts('Remember that customer ABC belongs to healthcare')[0]?.key);
     expect(extractExplicitFacts('For this request, use a table')).toEqual([]);
     expect(extractExplicitFacts('Get active customers')).toEqual([]);
+    const companyChange = 'Remember that Ahmed Khan changed his company to Conture and changed his indudtry to Modeling.';
+    expect(isReusableProcedureInstruction(companyChange)).toBe(false);
+    expect(extractExplicitFacts(companyChange)[0]?.type).toBe('semantic');
+    expect(extractExplicitFacts('Remember that customer names should be prefixed with Test-')).toEqual([]);
+    expect(isReusableProcedureInstruction('Show customers who always pay on time')).toBe(false);
+    expect(isReusableProcedureInstruction('For this request, display results in a table')).toBe(false);
   });
   it('keeps unrelated facts and updates equivalent facts without duplicate episodes', async () => {
     const repository = createMemoryRepository(pool);
@@ -87,7 +93,8 @@ describe('employee memories', () => {
   it('does not save procedures as part of chat memory persistence', async () => {
     const repository = createMemoryRepository(pool);
     const scope = { organizationId: randomUUID(), employeeId: 'e', userId: 'u', threadId: 't' };
-    await saveTurnMemories(repository, scope, 'one', 'Always display customer results in a table', []);
-    expect(await repository.list(scope, 'procedural')).toEqual([]);
+    const saved = await saveTurnMemories(repository, scope, 'one', 'Remember that customer names should be prefixed with Test-', []);
+    expect(saved).toEqual({ episodeSaved: false, semanticUpdates: 0 });
+    expect(await repository.list(scope)).toEqual([]);
   });
 });

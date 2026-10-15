@@ -101,6 +101,8 @@ curl -s http://localhost:3000/health
 
 `POST /api/procedural-memories` accepts `organizationId`, `employeeId`, `userId`, optional `threadId`, a stable caller-supplied `key`, and an `instruction`. It inserts or replaces that employee's procedure by key and returns the stored record. It does not invoke Bedrock or create a chat checkpoint. Read procedures and their keys with `POST /api/memories` and `"type":"procedural"`. Chat rejects reusable procedure instructions with HTTP 400 and does not load or apply stored procedures.
 
+A statement such as “Remember that Ahmed Khan changed his company to Conture and his industry to Modeling” is a semantic fact, so `/api/chat` accepts it. An instruction about how the employee should respond in future is procedural and belongs in `/api/procedural-memories`. Inspect the stored `type` with `/api/memories`; chat also records a separate episode of each completed interaction.
+
 ## How it works
 
 The chat graph follows `START → loadMemories → agent → executeTool ↔ agent → saveMemories → END`. `executeTool` runs only on a native `get_customers` model tool call. Its organization scope comes from the validated request, never the tool schema. Chat loads semantic facts and episodes, excluding legacy procedure-instruction episodes and checkpoint turns from earlier versions. It never queries, supplies, or returns procedural memory. The model sees a maximum of 20 recent checkpointed messages plus at most five records of each chat memory category. All long-term memory queries include both organization and employee IDs.
