@@ -2,7 +2,7 @@
 
 Every `POST /api/chat` turn loads semantic, episodic, and procedural memory before the agent runs. Procedures are written through `POST /api/procedural-memories` and inspected with `POST /api/memories`. Chat uses saved procedures only when presenting its final answer; it does not write them. Every PostgreSQL memory query is scoped by both `organizationId` and `employeeId`. The stored `userId` and `threadId` identify a memory's source but do not restrict employee-wide recall. Chat loads at most `MEMORY_LIMIT` records per category (default: five).
 
-The diagrams follow the current implementation. `memoriesUsed` in the chat response contains records actually supplied to the model, which can differ from records loaded from PostgreSQL.
+The diagrams show the internal memory flow. The chat API returns identifiers and the generated answer; it does not expose tool calls, retrieved memory context, memory-write status, or execution trace.
 
 ## Semantic memory: reusable facts
 
@@ -28,7 +28,7 @@ flowchart TD
     semanticDuplicate -- Yes --> semanticEpisode
     semanticDuplicate -- No --> semanticSave["Memory: upsert polished fact and save episode in one transaction"]
     explicitFact -- No --> semanticEpisode["Memory: save completed interaction episode"]
-    semanticSave --> semanticResponse["API: return response and memoriesUsed.semantic"]
+    semanticSave --> semanticResponse["API: return IDs and answer"]
     semanticEpisode --> semanticResponse
     classDef graphNode fill:#dbeafe,stroke:#2563eb,color:#172554
     classDef memoryNode fill:#dcfce7,stroke:#16a34a,color:#14532d
@@ -62,7 +62,7 @@ flowchart TD
     finalWithTool --> episodeSave["Memory: build episode from actual request and tool evidence"]
     finalWithoutTool --> episodeSave
     episodeSave --> episodeDbWrite[("PostgreSQL: save episode with source userId and threadId")]
-    episodeDbWrite --> episodeResponse["API: return response and memoriesUsed.episodic"]
+    episodeDbWrite --> episodeResponse["API: return IDs and answer"]
     classDef graphNode fill:#dbeafe,stroke:#2563eb,color:#172554
     classDef memoryNode fill:#dcfce7,stroke:#16a34a,color:#14532d
     classDef chainNode fill:#cffafe,stroke:#0891b2,color:#164e63
@@ -103,7 +103,7 @@ flowchart TD
     customerTool --> draft["LLM Agent: draft answer from real customer rows"]
     draft --> presentation["Same Qwen model: apply saved procedure to final display"]
     readDb --> presentation
-    presentation --> chatResponse["API: return response, toolCalls, and memoriesUsed.procedural"]
+    presentation --> chatResponse["API: return IDs and answer"]
     writeResponse --> readApi["Optional: POST /api/memories with type procedural"]
     saveResponse --> readApi
     readApi --> readValidate["API: validate organization, employee, user"]
@@ -126,6 +126,6 @@ flowchart TD
     class chatReject rejectNode
 ```
 
-Example: save `{"key":"ins-1","instruction":"Always add prefix Custo- with the customer Name while fetching Customers"}` through `POST /api/procedural-memories`. A later `Fetch Customers` chat turn retrieves actual rows first, then applies the prefix in the final response. The procedure is visible in `memoriesUsed.procedural`, while `toolCalls` shows unprefixed search filters. Sending that reusable instruction to chat directly is rejected.
+Example: save `{"key":"ins-1","instruction":"Always add prefix Custo- with the customer Name while fetching Customers"}` through `POST /api/procedural-memories`. A later `Fetch Customers` chat turn retrieves actual rows first, then applies the prefix to its returned answer. The chat API omits the tool-call details. Sending the reusable instruction to chat directly is rejected.
 
 For requests that exercise these paths, see [Memory cURL examples](memory-curl-examples.md).

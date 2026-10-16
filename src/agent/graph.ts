@@ -161,20 +161,10 @@ export function createAgent(pool: pg.Pool, model: ChatBedrockConverse, memoryLim
           { stage: 'thread_resolved', component: 'API', status: 'completed', details: { generated: generatedThreadId } },
         ],
       }, { configurable: { thread_id: checkpointKey(scope) }, recursionLimit: 20 });
-      const events: FlowEvent[] = [...final.flow,
-        { stage: 'checkpoint_persisted', component: 'LangGraph', status: 'completed' },
-        { stage: 'response_ready', component: 'API', status: 'completed' },
-      ];
       const memorySaved = final.flow.filter(event => event.stage === 'memories_saved').at(-1);
-      const semanticStatus = memorySaved?.details?.semanticDuplicates
-        ? 'already_exists' : memorySaved?.details?.semanticUpdates ? 'stored' : 'none';
       return {
-        response: semanticStatus === 'already_exists'
+        response: memorySaved?.details?.semanticDuplicates
           ? 'This fact is already stored in semantic memory.' : responseText(final.messages.at(-1)!),
-        memoryWrite: { semantic: semanticStatus },
-        toolCalls: final.executions.map(({ name, filters }) => ({ name, filters })),
-        memoriesUsed: Object.fromEntries((['semantic','episodic','procedural'] as const).map(type => [type, final.memoriesUsed[type].map(({ id, content }) => ({ id, content }))])) as Record<'semantic' | 'episodic' | 'procedural', { id: string; content: string }[]>,
-        flow: events.map((event, index) => ({ step: index + 1, ...event })),
       };
     },
     repository,

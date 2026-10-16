@@ -97,7 +97,7 @@ curl --location 'http://localhost:3001/api/chat' \
   }'
 ```
 
-Look for the saved fact in `memoriesUsed.semantic`.
+Use the semantic-filtered `/api/memories` request in step 9 to inspect the saved fact. This chat response contains the identifiers and generated answer.
 
 ## 7. Recall the previous search episode
 
@@ -113,7 +113,7 @@ curl --location 'http://localhost:3001/api/chat' \
   }'
 ```
 
-Look for the earlier customer search in `memoriesUsed.episodic`.
+Use the episodic-filtered `/api/memories` request in step 9 to inspect the earlier customer search.
 
 ## 8. Fetch customers with the saved procedure
 
@@ -129,7 +129,7 @@ curl --location 'http://localhost:3001/api/chat' \
   }'
 ```
 
-The response includes `memoriesUsed.procedural` with the saved record. Customer names in the final response should have `Custo-` added for display, while the actual `get_customers` filters in `toolCalls` do not contain that prefix. Chat still does not create or update procedural memory; use the dedicated API for writes.
+The agent applies the saved `Custo-` procedure to the returned answer, while `get_customers` uses the original search filters. The chat response omits tool-call and memory-context details. Chat still does not create or update procedural memory; use the dedicated API for writes.
 
 ## 9. Inspect all stored memories
 
@@ -169,7 +169,7 @@ curl --location 'http://localhost:3001/api/chat' \
   }'
 ```
 
-When Qwen recognizes the same meaning as step 1, `memoryWrite.semantic` is `already_exists` and `response` says the fact is already stored. The semantic record keeps its original ID and source. This completed chat turn still gets its own episode.
+When Qwen recognizes the same meaning as step 1, the `response` says the fact is already stored. The semantic record keeps its original ID and source. This completed chat turn still gets its own episode.
 
 ## 11. Try an equivalent procedural instruction
 

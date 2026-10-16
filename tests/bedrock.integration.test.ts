@@ -9,6 +9,8 @@ import { createApp } from '../src/app.js';
 import request from 'supertest';
 import { randomUUID } from 'node:crypto';
 import { refineMemory } from '../src/memory/refine-memory.js';
+import { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres';
+import { checkpointKey } from '../src/agent/graph.js';
 
 describe('configured Bedrock Qwen', () => {
   it('polishes wording and recognizes an equivalent stored procedure', async () => {
@@ -62,15 +64,22 @@ describe('configured Bedrock Qwen', () => {
     try {
       await runSqlFile(pool, 'schema'); await runSqlFile(pool, 'seed');
       const { app } = await createApp({ pool, model: createModel(env), env });
+      const ids = { organizationId: 'org-001', employeeId: randomUUID(), userId: 'live-test' };
       const result = await request(app).post('/api/chat').send({
-        organizationId: 'org-001', employeeId: randomUUID(), userId: 'live-test',
+        ...ids,
         message: 'Get active customers from Karachi using get_customers.',
       }).expect(200);
-      expect(result.body.toolCalls.some((call: { name: string }) => call.name === 'get_customers')).toBe(true);
+      expect(Object.keys(result.body).sort()).toEqual([
+        'employeeId', 'organizationId', 'response', 'threadId', 'userId',
+      ]);
       expect(result.body.response).toContain('Ahmed');
       expect(result.body.threadId).toBeTruthy();
-      expect(result.body.flow.map((event: { stage: string }) => event.stage)).toContain('tool_executed');
-      expect(result.body.flow.at(-1)).toMatchObject({ stage: 'response_ready', status: 'completed' });
+      const episode = await pool.query<{ metadata: { executions: unknown[] } }>(
+        "SELECT metadata FROM employee_memories WHERE organization_id=$1 AND employee_id=$2 AND memory_type='episodic'",
+        [ids.organizationId, ids.employeeId]);
+      expect(episode.rows[0]?.metadata.executions).toMatchObject([{
+        name: 'get_customers', filters: { city: 'Karachi', status: 'active' }, outcome: 'success', count: 1,
+      }]);
     } finally { await pool.end(); }
   });
   it('applies a saved customer display procedure after fetching real records', async () => {
@@ -86,11 +95,18 @@ describe('configured Bedrock Qwen', () => {
         instruction: 'Always add prefix Custo- with the customer Name while fetching Customers',
       }).expect(200);
       const result = await request(app).post('/api/chat').send({ ...ids, message: 'Fetch Customers' }).expect(200);
-      expect(result.body.toolCalls.some((call: { name: string }) => call.name === 'get_customers')).toBe(true);
-      expect(result.body.toolCalls.every((call: { filters: { name?: string } }) =>
-        !call.filters.name?.includes('Custo-'))).toBe(true);
-      expect(result.body.memoriesUsed.procedural).toHaveLength(1);
+      expect(Object.keys(result.body).sort()).toEqual([
+        'employeeId', 'organizationId', 'response', 'threadId', 'userId',
+      ]);
       expect(result.body.response).toContain('Custo-Ahmed Khan');
+      const episode = await pool.query<{ metadata: { executions: { name: string; filters: { name?: string } }[] } }>(
+        "SELECT metadata FROM employee_memories WHERE organization_id=$1 AND employee_id=$2 AND memory_type='episodic'",
+        [ids.organizationId, ids.employeeId]);
+      expect(episode.rows[0]?.metadata.executions[0]?.name).toBe('get_customers');
+      expect(JSON.stringify(episode.rows[0]?.metadata.executions[0]?.filters)).not.toContain('Custo-');
+      const checkpoint = await new PostgresSaver(pool).getTuple({ configurable: { thread_id: checkpointKey(ids) } });
+      const messages = checkpoint?.checkpoint.channel_values.messages as { content: string }[] | undefined;
+      expect(String(messages?.at(-1)?.content)).toContain('Custo-Ahmed Khan');
     } finally { await pool.end(); }
   });
 });

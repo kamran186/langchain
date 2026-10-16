@@ -88,7 +88,7 @@ curl -s http://localhost:3000/api/chat -H 'Content-Type: application/json' \
   -d '{"organizationId":"org-001","employeeId":"emp-001","userId":"user-002","threadId":"thread-003","message":"Fetch Customers"}'
 ```
 
-The last response should display names such as `Custo-Ahmed Khan`. Its `toolCalls` filters contain the actual database search values without the display prefix, and `memoriesUsed.procedural` lists the saved instruction supplied for final presentation.
+The agent still fetches customers and applies the saved `Custo-` preference to the returned answer. The chat endpoint returns the request identifiers and `response`. Inspect stored interaction summaries and procedures with `POST /api/memories`.
 
 Inspect memory or check another employee's isolated view:
 
@@ -102,7 +102,7 @@ curl -s http://localhost:3000/api/memories -H 'Content-Type: application/json' \
 curl -s http://localhost:3000/health
 ```
 
-`POST /api/chat` returns the IDs, generated or supplied `threadId`, final response, actual validated tool calls, semantic, episodic, and procedural `memoriesUsed` arrays, `memoryWrite.semantic` (`stored`, `already_exists`, or `none`), and an ordered `flow` array for inspection in Postman. A repeated semantic fact returns `This fact is already stored in semantic memory.` without writing a duplicate fact. Each flow entry has a one-based `step`, `stage`, `component` (`API`, `LangGraph`, `Memory`, `LangChain`, or `LLM Agent`), `status`, and optional `details`. It records request validation, thread resolution, checkpoint retrieval, memory retrieval, each LangChain model invocation and agent decision, each actual tool execution and result return, any final presentation pass, memory persistence, checkpoint persistence, and response readiness. Tool entries distinguish `success`, `empty`, and `failure`; memory entries report actual saved update counts. The flow is execution metadata, not the model's private reasoning. `memoriesUsed` lists records supplied to the model; it does not prove which records influenced its reasoning. `POST /api/memories` is an employee-wide inspection view filtered by organization and employee, not user.
+`POST /api/chat` returns exactly `organizationId`, `employeeId`, `userId`, the supplied or generated `threadId`, and the generated `response`. It omits tool-call details, retrieved memory context, memory-write status, and the execution trace. The agent still runs its customer tool, loads memory, saves episodes, and persists checkpoints. `POST /api/memories` is an employee-wide inspection view filtered by organization and employee, not user.
 
 `POST /api/procedural-memories` accepts `organizationId`, `employeeId`, `userId`, optional `threadId`, a stable caller-supplied `key`, and an `instruction`. Qwen polishes the wording without changing its meaning and compares it with scoped procedures before storage. The response includes `status` (`created`, `updated`, or `already_exists`), a short `message`, and the stored record. Equivalent wording returns the existing record without a write, even if the caller supplied another key. Exact repeats of the original instruction need no model call. New or changed wording uses one Bedrock refinement call; this endpoint does not create a chat checkpoint. Read procedures and their keys with `POST /api/memories` and `"type":"procedural"`. Chat rejects requests to save reusable procedures with HTTP 400, but loads existing procedures and applies relevant ones to its final response.
 
