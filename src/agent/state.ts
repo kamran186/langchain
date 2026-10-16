@@ -3,7 +3,10 @@ import { Annotation, messagesStateReducer } from '@langchain/langgraph';
 import type { Scope, ChatMemories } from '../memory/memory.repository.js';
 import type { CustomerFilters } from '../tools/get-customers.tool.js';
 
-export type ToolExecution = { name: 'get_customers'; filters: CustomerFilters; outcome: 'success' | 'empty' | 'failure'; count?: number };
+export type ToolExecution =
+  | { name: 'get_customers'; filters: CustomerFilters; outcome: 'success' | 'empty' | 'failure'; count?: number }
+  | { name: 'create_text_file'; outcome: 'success' | 'failure'; path?: string }
+  | { name: 'send_dummy_mail'; outcome: 'success' | 'failure'; receiver: string };
 export type FlowEvent = {
   stage: string;
   component: 'API' | 'LangGraph' | 'Memory' | 'LangChain' | 'LLM Agent';

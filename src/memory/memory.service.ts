@@ -1,12 +1,11 @@
 import { z } from 'zod';
-import type { CustomerFilters } from '../tools/get-customers.tool.js';
+import type { ToolExecution } from '../agent/state.js';
 import type { Scope } from './memory.repository.js';
 import { createMemoryRepository } from './memory.repository.js';
 import type { ChatBedrockConverse } from '@langchain/aws';
 import { refineMemory } from './refine-memory.js';
 
 const candidate = z.object({ type: z.literal('semantic'), key: z.string().min(2).max(150), content: z.string().min(5).max(1000) });
-type Execution = { name: 'get_customers'; filters: CustomerFilters; outcome: 'success' | 'empty' | 'failure'; count?: number };
 
 export function isReusableProcedureInstruction(message: string): boolean {
   const text = message.trim().replace(/\s+/g, ' ');
@@ -40,15 +39,18 @@ export function extractExplicitFacts(message: string) {
   return result;
 }
 
-export function episodeSummary(request: string, executions: Execution[]) {
-  const actions = executions.map((item) =>
-    `${item.name} ${JSON.stringify(item.filters)}: ${item.outcome}${item.count === undefined ? '' : ` (${item.count} records)`}`);
+export function episodeSummary(request: string, executions: ToolExecution[]) {
+  const actions = executions.map((item) => {
+    if (item.name === 'get_customers') return `${item.name} ${JSON.stringify(item.filters)}: ${item.outcome}${item.count === undefined ? '' : ` (${item.count} records)`}`;
+    if (item.name === 'create_text_file') return `${item.name}: ${item.outcome}${item.path ? ` (${item.path})` : ''}`;
+    return `${item.name} for ${item.receiver}: ${item.outcome} (simulation only; no email sent)`;
+  });
   return `Request: ${request.slice(0, 300)}. ${actions.length ? `Actions: ${actions.join('; ')}. ` : ''}Outcome: ${executions.some(x => x.outcome === 'failure') ? 'tool failure' : 'completed'}.`;
 }
 
 export async function saveTurnMemories(
   repository: ReturnType<typeof createMemoryRepository>, scope: Scope, turnId: string,
-  message: string, executions: Execution[], model: ChatBedrockConverse,
+  message: string, executions: ToolExecution[], model: ChatBedrockConverse,
 ): Promise<{ episodeSaved: boolean; semanticUpdates: number; semanticDuplicates: number }> {
   if (isReusableProcedureInstruction(message)) return { episodeSaved: false, semanticUpdates: 0, semanticDuplicates: 0 };
   const key = `turn:${turnId}`;

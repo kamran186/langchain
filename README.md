@@ -1,6 +1,6 @@
 # LangGraph employee memory POC
 
-A TypeScript REST service with one LangGraph agent, one PostgreSQL customer tool, AWS Bedrock Qwen, PostgreSQL checkpoints, and employee-scoped semantic, episodic, and procedural memory.
+A TypeScript REST service with one LangGraph agent, three LangChain tools, AWS Bedrock Qwen, PostgreSQL checkpoints, and employee-scoped semantic, episodic, and procedural memory. The tools search PostgreSQL customers, create a text file, and simulate an email.
 
 ## Setup on another system
 
@@ -45,7 +45,7 @@ On Windows PowerShell, use `Copy-Item .env.example .env` instead of `cp .env.exa
 
 `pnpm test` uses `langgraph_memory_test`, a separate database created by the Compose container on its first initialization. It refuses to run against the development database. If a PostgreSQL volume predates this project, create the test database once with `docker compose exec postgres psql -U postgres -d postgres -c 'CREATE DATABASE langgraph_memory_test'`.
 
-`pnpm test:bedrock` is a separate live test that invokes the configured Qwen model with the native customer tool schema. It requires a valid Bedrock key and is excluded from `pnpm test`.
+`pnpm test:bedrock` is a separate live suite that invokes the configured Qwen model, including the native customer, text-file, and dummy-email tools. It requires a valid Bedrock key and is excluded from `pnpm test`.
 
 ## API examples
 
@@ -90,6 +90,15 @@ curl -s http://localhost:3000/api/chat -H 'Content-Type: application/json' \
 
 The agent still fetches customers and applies the saved `Custo-` preference to the returned answer. The chat endpoint returns the request identifiers and `response`. Inspect stored interaction summaries and procedures with `POST /api/memories`.
 
+Ask the agent to fetch customers, save its response, and prepare a dummy email:
+
+```sh
+curl -s http://localhost:3000/api/chat -H 'Content-Type: application/json' \
+  -d '{"organizationId":"org-001","employeeId":"emp-001","userId":"user-001","threadId":"export-001","message":"Get active customers from Karachi, save your response as a text file, and send a dummy email with that summary to receiver@example.com."}'
+```
+
+Qwen selects tools from their LangChain descriptions and Zod schemas; the request does not need to name a tool. It can call `get_customers`, then `create_text_file`, then `send_dummy_mail`. Text files are written to the project's ignored `output/` folder with unique `.txt` names. The file is synchronized with the final `response` returned by `/api/chat`; the agent is instructed to include its path in that response. `send_dummy_mail` validates the receiver, subject, and body and returns `sent: false` with `status: simulated`. It does not connect to an email provider or deliver a message. The final answer must describe the email as a simulation.
+
 Inspect memory or check another employee's isolated view:
 
 ```sh
@@ -110,7 +119,7 @@ A statement such as “Remember that Ahmed Khan changed his company to Conture a
 
 ## How it works
 
-The chat graph follows `START → loadMemories → agent → executeTool ↔ agent → saveMemories → END`. `executeTool` runs only on a native `get_customers` model tool call. Its organization scope comes from the validated request, never the tool schema. Chat loads semantic facts, episodes, and procedures, excluding legacy procedure-instruction episodes and checkpoint turns from earlier versions. The tool-decision model sees semantic facts and episodes; when it has a final draft, a separate call on the same Qwen model applies retrieved procedures to presentation only. This keeps display preferences out of tool filters. The model sees a maximum of 20 recent checkpointed messages plus at most five records of each memory category. All long-term memory queries include both organization and employee IDs.
+The chat graph follows `START → loadMemories → agent → executeTool ↔ agent → saveMemories → END`. The agent binds the registered tools to Qwen. Qwen decides which to call from their descriptions; LangGraph's `ToolNode` executes those native calls and returns matching `ToolMessage`s. A registry adapter records outcomes for episodes without a tool-name dispatch chain in the graph. The customer tool's organization scope comes from validated graph state, never the model-visible schema. Chat loads semantic facts, episodes, and procedures, excluding legacy procedure-instruction episodes and checkpoint turns from earlier versions. The tool-decision model sees semantic facts and episodes; when it has a final draft, a separate call on the same Qwen model applies retrieved procedures to presentation only. This keeps display preferences out of tool filters. The model sees a maximum of 20 recent checkpointed messages plus at most five records of each memory category. All long-term memory queries include both organization and employee IDs.
 
 After a final chat response, the service writes a deterministic episode from the actual request and tool execution evidence. It stores semantic facts only from explicit `Remember that ...` or customer-fact statements. One bounded Qwen call polishes a new semantic fact and compares it with scoped facts. The original user wording is retained in metadata. Equivalent facts are not written again; the interaction still creates its normal episode. These conservative rules avoid promoting tool data or model guesses into permanent facts. A temporary request instruction is left in the conversation only. Stable keys update changed semantic facts in the same employee scope. The originating user and thread are recorded for inspection but do not restrict recall.
 

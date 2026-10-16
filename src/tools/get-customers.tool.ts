@@ -1,6 +1,7 @@
-import { tool } from '@langchain/core/tools';
+import { tool, type ToolRuntime } from '@langchain/core/tools';
 import { z } from 'zod';
 import type pg from 'pg';
+import type { Scope } from '../memory/memory.repository.js';
 
 export const customerFilters = z.object({
   name: z.string().min(1).optional(), email: z.string().min(1).optional(),
@@ -28,8 +29,18 @@ export async function queryCustomers(pool: pg.Pool, organizationId: string, raw:
   return { records: rows.rows, totalMatched: Number(count.rows[0]?.count ?? 0), appliedFilters: { ...filters, limit: filters.limit ?? 10 } };
 }
 
-export function createGetCustomersTool(pool: pg.Pool, organizationId: string) {
-  return tool(async (filters) => JSON.stringify(await queryCustomers(pool, organizationId, filters)), {
-    name: 'get_customers', description: 'Read customers for the current organization using optional filters.', schema: customerFilters,
+export function createGetCustomersTool(pool: pg.Pool, organizationId?: string) {
+  return tool(async (filters, runtime: ToolRuntime<{ context: Scope }>) => {
+    const scopedOrganizationId = organizationId ?? runtime.state?.context?.organizationId;
+    if (!scopedOrganizationId) throw new Error('Customer tool missing organization scope');
+    try {
+      return JSON.stringify(await queryCustomers(pool, scopedOrganizationId, filters));
+    } catch {
+      return JSON.stringify({ error: 'Customer lookup failed' });
+    }
+  }, {
+    name: 'get_customers',
+    description: 'Search current customer records in the request organization when the user asks to find, list, or filter customers. Filter by name, email, city, active or inactive status, and result limit. Read-only; organization scope is supplied by the application.',
+    schema: customerFilters,
   });
 }

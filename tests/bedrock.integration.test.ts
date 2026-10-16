@@ -8,11 +8,42 @@ import { runSqlFile } from '../src/db/postgres.js';
 import { createApp } from '../src/app.js';
 import request from 'supertest';
 import { randomUUID } from 'node:crypto';
+import { readFile, unlink } from 'node:fs/promises';
 import { refineMemory } from '../src/memory/refine-memory.js';
 import { PostgresSaver } from '@langchain/langgraph-checkpoint-postgres';
 import { checkpointKey } from '../src/agent/graph.js';
 
 describe('configured Bedrock Qwen', () => {
+  it('selects customer search, text export, and dummy mail from natural language', async () => {
+    const env = loadEnv();
+    const url = process.env.TEST_DATABASE_URL ?? 'postgresql://postgres:postgres@localhost:5432/langgraph_memory_test';
+    if (url === env.DATABASE_URL || !url.endsWith('/langgraph_memory_test')) throw new Error('Unsafe test database URL');
+    const pool = createPool(url);
+    let savedPath: string | undefined;
+    try {
+      await runSqlFile(pool, 'schema'); await runSqlFile(pool, 'seed');
+      const { app } = await createApp({ pool, model: createModel(env), env });
+      const ids = { organizationId: 'org-001', employeeId: randomUUID(), userId: 'live-test', threadId: randomUUID() };
+      const result = await request(app).post('/api/chat').send({ ...ids,
+        message: 'Please complete these three actions in order: find active customers in Karachi; save a text file containing your answer; prepare a dummy email to receiver@example.com with that customer summary. Finish only after all three actions. Do not send a real email.',
+      }).expect(200);
+      const episode = await pool.query<{ metadata: { executions: { name: string; outcome: string; path?: string; count?: number }[] } }>(
+        "SELECT metadata FROM employee_memories WHERE organization_id=$1 AND employee_id=$2 AND memory_type='episodic'",
+        [ids.organizationId, ids.employeeId]);
+      const executions = episode.rows[0]?.metadata.executions ?? [];
+      savedPath = executions.find(item => item.name === 'create_text_file')?.path;
+      expect(executions.map(item => item.name)).toEqual(['get_customers', 'create_text_file', 'send_dummy_mail']);
+      expect(executions.every(item => item.outcome === 'success')).toBe(true);
+      expect(executions[0]?.count).toBe(1);
+      expect(savedPath).toBeTruthy();
+      expect(result.body.response).toContain(savedPath);
+      expect(await readFile(savedPath!, 'utf8')).toBe(result.body.response);
+      expect(result.body.response.toLowerCase()).toMatch(/no (real )?email was sent|not sent|simulat/);
+    } finally {
+      if (savedPath) await unlink(savedPath);
+      await pool.end();
+    }
+  });
   it('polishes wording and recognizes an equivalent stored procedure', async () => {
     const model = createModel(loadEnv());
     const existing = { id: randomUUID(), content: 'Always display customer names in a table.' };

@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { readFile, readdir, unlink } from 'node:fs/promises';
 import { beforeAll, afterAll, describe, expect, it } from 'vitest';
 import { AIMessage, HumanMessage, ToolMessage, type BaseMessage } from '@langchain/core/messages';
 import type { ChatBedrockConverse } from '@langchain/aws';
@@ -63,6 +64,193 @@ afterAll(async () => { await pool?.end(); });
 const scope = () => ({ organizationId: 'org-001', employeeId: randomUUID(), userId: 'user-001', threadId: randomUUID() });
 
 describe('LangGraph and API', () => {
+  it('offers described tools so a natural-language request can select customer search', async () => {
+    const model = {
+      bindTools: (tools: { name: string; description: string; schema: unknown }[]) => {
+        expect(tools.map(item => item.name).sort()).toEqual(['create_text_file', 'get_customers', 'send_dummy_mail']);
+        expect(tools.every(item => item.description.length > 40 && item.schema)).toBe(true);
+        const customerTool = tools.find(item => /search.*customer/i.test(item.description));
+        expect(customerTool?.name).toBe('get_customers');
+        return { invoke: async (messages: BaseMessage[]) => {
+          expect(String(messages[0]?.content)).not.toMatch(/get_customers|create_text_file|send_dummy_mail/);
+          const last = messages.at(-1)!;
+          if (last instanceof ToolMessage) {
+            const result = JSON.parse(String(last.content)) as { records: { name: string }[] };
+            return new AIMessage(`Customers: ${result.records.map(row => row.name).join(', ')}`);
+          }
+          return new AIMessage({ content: '', tool_calls: [{ name: customerTool!.name,
+            args: { city: 'Karachi', status: 'active' }, id: randomUUID() }] });
+        } };
+      },
+      invoke: mockModel.invoke,
+    } as unknown as ChatBedrockConverse;
+    const { app } = await createApp({ pool, model });
+    const ids = scope();
+    const result = await request(app).post('/api/chat').send({ ...ids,
+      message: 'Find active customers in Karachi',
+    }).expect(200);
+    expect(result.body.response).toBe('Customers: Ahmed Khan');
+  });
+
+  it('validates every call before running concurrent tools', async () => {
+    const before = new Set(await readdir('output').catch(() => []));
+    const model = {
+      bindTools: () => ({ invoke: async () => new AIMessage({ content: '', tool_calls: [
+        { name: 'create_text_file', args: { content: 'Do not create this file' }, id: randomUUID() },
+        { name: 'send_dummy_mail', args: { receiver: 'invalid', subject: 'Hi', body: 'Hi' }, id: randomUUID() },
+      ] }) }),
+      invoke: mockModel.invoke,
+    } as unknown as ChatBedrockConverse;
+    const { app } = await createApp({ pool, model });
+    const ids = scope();
+    try {
+      await request(app).post('/api/chat').send({ ...ids,
+        message: 'Save this reply and prepare a dummy email',
+      }).expect(400);
+      expect(await readdir('output').catch(() => [])).toEqual([...before]);
+    } finally {
+      for (const filename of await readdir('output').catch(() => [])) {
+        if (!before.has(filename)) await unlink(`output/${filename}`);
+      }
+    }
+  });
+
+  it('saves model supplied response text under the project output folder', async () => {
+    let savedPath = '';
+    const model = {
+      bindTools: (tools: { name: string }[]) => {
+        expect(tools.map(item => item.name).sort()).toEqual(['create_text_file', 'get_customers', 'send_dummy_mail']);
+        return { invoke: async (messages: BaseMessage[]) => {
+          const last = messages.at(-1)!;
+          if (last instanceof ToolMessage) {
+            const result = JSON.parse(String(last.content)) as { status: string; path: string };
+            expect(result.status).toBe('created');
+            expect(result.path).toContain('/output/');
+            savedPath = result.path;
+            return new AIMessage(`Customers: Ahmed Khan\nSaved to ${result.path}`);
+          }
+          return new AIMessage({ content: '', tool_calls: [{ name: 'create_text_file',
+            args: { content: 'Customers: Ahmed Khan' }, id: randomUUID() }] });
+        } };
+      },
+      invoke: mockModel.invoke,
+    } as unknown as ChatBedrockConverse;
+    const { app } = await createApp({ pool, model });
+    const ids = scope();
+    const result = await request(app).post('/api/chat').send({ ...ids, message: 'Save this response as a text file' }).expect(200);
+    expect(result.body.response).toBe(`Customers: Ahmed Khan\nSaved to ${savedPath}`);
+    expect(await readFile(savedPath, 'utf8')).toBe(result.body.response);
+    await unlink(savedPath);
+    const episode = await pool.query<{ metadata: { executions: { name: string; outcome: string }[] } }>(
+      "SELECT metadata FROM employee_memories WHERE organization_id=$1 AND employee_id=$2 AND memory_type='episodic'",
+      [ids.organizationId, ids.employeeId]);
+    expect(episode.rows[0]?.metadata.executions).toMatchObject([{ name: 'create_text_file', outcome: 'success' }]);
+  });
+
+  it('simulates email delivery and never reports a real send', async () => {
+    const model = {
+      bindTools: () => ({ invoke: async (messages: BaseMessage[]) => {
+        const last = messages.at(-1)!;
+        if (last instanceof ToolMessage) {
+          const result = JSON.parse(String(last.content)) as { status: string; receiver: string };
+          expect(result).toMatchObject({ status: 'simulated', receiver: 'receiver@example.com' });
+          return new AIMessage('Dummy email prepared for receiver@example.com; no email was sent.');
+        }
+        return new AIMessage({ content: '', tool_calls: [{ name: 'send_dummy_mail',
+          args: { receiver: 'receiver@example.com', subject: 'Customer update', body: 'Hello' }, id: randomUUID() }] });
+      } }),
+      invoke: mockModel.invoke,
+    } as unknown as ChatBedrockConverse;
+    const { app } = await createApp({ pool, model });
+    const ids = scope();
+    const result = await request(app).post('/api/chat').send({ ...ids, message: 'Send a dummy mail to receiver@example.com' }).expect(200);
+    expect(result.body.response).toContain('no email was sent');
+    const episode = await pool.query<{ metadata: { executions: { name: string; outcome: string }[] } }>(
+      "SELECT metadata FROM employee_memories WHERE organization_id=$1 AND employee_id=$2 AND memory_type='episodic'",
+      [ids.organizationId, ids.employeeId]);
+    expect(episode.rows[0]?.metadata.executions).toMatchObject([{ name: 'send_dummy_mail', outcome: 'success' }]);
+  });
+
+  it('records two native tool calls from one model message', async () => {
+    const fileCallId = randomUUID();
+    const mailCallId = randomUUID();
+    let savedPath = '';
+    const model = {
+      bindTools: () => ({ invoke: async (messages: BaseMessage[]) => {
+        if (messages.at(-1) instanceof ToolMessage) {
+          const results = messages.slice(-2) as ToolMessage[];
+          expect(results.map(item => item.tool_call_id)).toEqual([fileCallId, mailCallId]);
+          savedPath = (JSON.parse(String(results[0]!.content)) as { path: string }).path;
+          expect(JSON.parse(String(results[1]!.content))).toMatchObject({ status: 'simulated', sent: false });
+          return new AIMessage(`Saved to ${savedPath}. Dummy email prepared; no email was sent.`);
+        }
+        return new AIMessage({ content: '', tool_calls: [
+          { name: 'create_text_file', args: { content: 'A short answer' }, id: fileCallId },
+          { name: 'send_dummy_mail', args: { receiver: 'receiver@example.com', subject: 'Update', body: 'A short answer' }, id: mailCallId },
+        ] });
+      } }),
+      invoke: mockModel.invoke,
+    } as unknown as ChatBedrockConverse;
+    const { app } = await createApp({ pool, model });
+    const ids = scope();
+    const result = await request(app).post('/api/chat').send({ ...ids,
+      message: 'Save an answer as a text file and prepare a dummy email to receiver@example.com',
+    }).expect(200);
+    expect(await readFile(savedPath, 'utf8')).toBe(result.body.response);
+    await unlink(savedPath);
+    const episode = await pool.query<{ metadata: { executions: { name: string; outcome: string }[] } }>(
+      "SELECT metadata FROM employee_memories WHERE organization_id=$1 AND employee_id=$2 AND memory_type='episodic'",
+      [ids.organizationId, ids.employeeId]);
+    expect(episode.rows[0]?.metadata.executions).toMatchObject([
+      { name: 'create_text_file', outcome: 'success' }, { name: 'send_dummy_mail', outcome: 'success' },
+    ]);
+  });
+
+  it('runs customer lookup, text export, and dummy mail in sequence', async () => {
+    let savedPath = '';
+    let customerResponse = '';
+    const model = {
+      bindTools: () => ({ invoke: async (messages: BaseMessage[]) => {
+        const last = messages.at(-1)!;
+        if (!(last instanceof ToolMessage)) return new AIMessage({ content: '', tool_calls: [{
+          name: 'get_customers', args: { city: 'Karachi', status: 'active' }, id: randomUUID(),
+        }] });
+        const result = JSON.parse(String(last.content)) as { records?: { name: string }[]; path?: string; status?: string };
+        if (last.name === 'get_customers') {
+          customerResponse = `Customers: ${result.records!.map(row => row.name).join(', ')}`;
+          return new AIMessage({ content: '', tool_calls: [{
+            name: 'create_text_file', args: { content: customerResponse }, id: randomUUID(),
+          }] });
+        }
+        if (last.name === 'create_text_file') {
+          savedPath = result.path!;
+          return new AIMessage({ content: '', tool_calls: [{
+            name: 'send_dummy_mail', args: { receiver: 'receiver@example.com', subject: 'Customers', body: customerResponse }, id: randomUUID(),
+          }] });
+        }
+        expect(result.status).toBe('simulated');
+        return new AIMessage(`${customerResponse}\nSaved to ${savedPath}\nDummy email prepared for receiver@example.com; no email was sent.`);
+      } }),
+      invoke: mockModel.invoke,
+    } as unknown as ChatBedrockConverse;
+    const { app } = await createApp({ pool, model });
+    const ids = scope();
+    const result = await request(app).post('/api/chat').send({ ...ids,
+      message: 'Get active customers from Karachi, save the response as a text file, and send a dummy email to receiver@example.com',
+    }).expect(200);
+    expect(result.body.response).toContain('Customers: Ahmed Khan');
+    expect(await readFile(savedPath, 'utf8')).toBe(result.body.response);
+    await unlink(savedPath);
+    const episode = await pool.query<{ metadata: { executions: { name: string; outcome: string }[] } }>(
+      "SELECT metadata FROM employee_memories WHERE organization_id=$1 AND employee_id=$2 AND memory_type='episodic'",
+      [ids.organizationId, ids.employeeId]);
+    expect(episode.rows[0]?.metadata.executions).toMatchObject([
+      { name: 'get_customers', outcome: 'success' },
+      { name: 'create_text_file', outcome: 'success' },
+      { name: 'send_dummy_mail', outcome: 'success' },
+    ]);
+  });
+
   it('returns only identifiers and the generated answer from chat', async () => {
     const { app } = await createApp({ pool, model: mockModel });
     const ids = scope();
