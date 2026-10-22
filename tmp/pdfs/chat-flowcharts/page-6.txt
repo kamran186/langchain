@@ -1,0 +1,48 @@
+/CHAT WORKFLOWS  |  SCENARIO 03 - SUMMARY
+6 / 7
+SCENARIO 03 / MULTIPLE TOOLS + MULTIPLE MEMORIES
+Fetch customers and their orders
+User prompt
+Fetch customers and their order details; make sure to apply appropriate rules.
+Intent and applied tools
+TOOL
+INPUT AND OUTPUT DEPENDENCY
+1. get_customers
+Existing read tool
+Apply the request and retrieved rules; scope to organizationId. Retrieve every matching
+customer page and collect actual customer IDs.
+2. get_orders
+Proposed read tool
+Receive the actual customer IDs plus organization scope and applicable order filters.
+Return associated order details; paginate when needed. Batch IDs where supported.
+get_orders must be registered with a schema, access/effect metadata and an organization-scoped handler. This capability is not
+present in the inspected branch.
+Applied memories
+TYPE
+ROLE FOR THIS PROMPT
+Semantic
+Relevant facts/preferences for this organization + session, such as a current-session
+customer focus or output preference. Never restore Semantic facts from an earlier
+session.
+Procedural
+Organization-scoped customer and order handling rules. Apply only retrieved, relevant
+rules. For example, an active-only restriction requires the corresponding supported
+database field/filter.
+Episodic
+Advisory prior steps and outcomes, such as fetching customer IDs before associated
+orders. Verify against the current request, schemas and live results.
+Highlighted execution path
+1. Prepare the request, retrieve memories, select both tools and resolve their definitions.
+2. Initial agent proposes get_customers; authorize and execute the read.
+3. Append actual customer results. The result agent uses returned IDs to propose get_orders.
+4. Authorize and execute order reads. Continue any required customer/order pagination.
+5. Combine customers with their orders; preserve structured results, record the episode and complete.
+The same orange executeRegisteredTools box handles both tool names on separate passes. The initial and result agent boxes
+represent the same logical agentModel at different times.
+Response and empty results
+No customers: return a successful empty customer result and skip get_orders. Customer with no orders: retain
+that customer with orders: []. Tool failure: distinguish missing data from retrieval failure and label partial results
+accurately.
+Illustrative response shape: customers: [{ id, name, orders: [...] }]. No customer IDs or business rules are fabricated. No business
+write approval is needed.
+NEXT PAGE - Complete original chart. All three memory-context branches and the dependent read loop are highlighted.

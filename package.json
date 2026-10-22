@@ -8,9 +8,7 @@
     "start": "node --import tsx src/server.ts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "test:bedrock": "vitest run tests/bedrock.integration.test.ts --config vitest.bedrock.config.ts",
-    "db:init": "node --import tsx src/db/postgres.ts init",
-    "db:seed": "node --import tsx src/db/postgres.ts seed"
+    "db:init": "node --import tsx src/db/init.ts"
   },
   "dependencies": {
     "@langchain/aws": "^1.4.5",

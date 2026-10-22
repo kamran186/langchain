@@ -1,0 +1,47 @@
+/CHAT WORKFLOWS  |  SCENARIO 02 - SUMMARY
+4 / 7
+SCENARIO 02 / TOOL + MEMORY
+Fetch all USA customers
+User prompt
+Fetch all customers from USA.
+Intent and applied tools
+Intent: task / question. The prompt supplies country = USA. For this example, a retrieved Procedural rule adds the
+condition: include only active customers.
+TOOL / INPUT
+EXECUTION
+get_customers
+Read
+Organization-scoped customer lookup with country plus the active-only condition. Use
+limit/offset pagination until every matching page has been retrieved.
+Request context
+organizationId scopes the query; employeeId and userId remain metadata. The country
+value must match the database vocabulary or an explicit alias mapping.
+Applied memories
+TYPE
+ROLE FOR THIS PROMPT
+Procedural
+Applied example
+Illustrative stored rule: "When fetching customers, include only active customers." This is a
+rule, so it belongs in Procedural Memory.
+Semantic
+Optional
+Relevant current-session facts/preferences, if present. No Semantic fact is required to infer
+USA; it is already in the prompt. Otherwise use [].
+Episodic
+Optional
+Prior successful query steps may advise execution. A past episode cannot establish
+whether a customer is active now; the business database must provide that value.
+Highlighted execution path
+Request/context -> prepare prompt + intent -> parallel memory search -> select get_customers -> resolve schema
+-> initial agent -> authorize read -> executeRegisteredTools -> PostgreSQL -> append actual rows -> agent reads
+results -> further pages when needed -> compose response -> recordEpisode -> completed.
+The return loop lets the agent use actual rows and decide whether more pages are required. Completed, unchanged reads must
+not be repeated. "All" is valid only after pagination is exhausted.
+Current prerequisites and response
+Required addition: the current Customer schema has no active/status field or filter. Until this is added, report the
+limitation; unfiltered customers do not satisfy the active-only rule. Country filtering also does not normalize USA /
+United States automatically.
+Return matching rows as structured results plus a readable summary. Zero matches is a successful result with customers: []. If
+retrieval stops early or fails, identify partial results instead of claiming completeness.
+NEXT PAGE - Complete original chart. Orange identifies actual get_customers execution; the read loop may repeat for
+pagination.

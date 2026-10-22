@@ -1,0 +1,16 @@
+[
+  {
+    "file": "01-save-session-preference.mmd",
+    "nodes": 60,
+    "edges": 78,
+    "highlighted": 26,
+    "execution": 0
+  },
+  {
+    "file": "02-fetch-customers-with-session-preference.mmd",
+    "nodes": 60,
+    "edges": 78,
+    "highlighted": 32,
+    "execution": 1
+  }
+]

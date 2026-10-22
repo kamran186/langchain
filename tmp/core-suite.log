@@ -1,0 +1,20 @@
+$ vitest run
+
+ RUN  v3.2.7 /Users/kamran186/Documents/dev/learning/langGraph
+
+ ✓ tests/memory.test.ts (5 tests) 13ms
+ ✓ tests/memory-review.test.ts (12 tests) 10ms
+ ✓ tests/memory-batch.test.ts (4 tests) 12ms
+ ✓ tests/customers.test.ts (6 tests) 18ms
+ ✓ tests/tools.test.ts (5 tests) 9ms
+ ✓ tests/llm.test.ts (15 tests) 21ms
+ ✓ tests/core.test.ts (7 tests) 17ms
+ ✓ tests/graph.test.ts (15 tests) 521ms
+ ✓ tests/batch-api.test.ts (6 tests) 124ms
+ ✓ tests/server.test.ts (11 tests) 160ms
+
+ Test Files  10 passed (10)
+      Tests  86 passed (86)
+   Start at  12:47:17
+   Duration  1.64s (transform 625ms, setup 0ms, collect 5.14s, tests 903ms, environment 1ms, prepare 820ms)
+

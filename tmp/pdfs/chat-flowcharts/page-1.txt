@@ -1,0 +1,48 @@
+/CHAT WORKFLOWS  |  READING GUIDE
+1 / 7
+ARCHITECTURE REFERENCE / 21 OCTOBER 2026
+/chat workflows
+Three highlighted scenarios
+Complete flowcharts with applied tools, memory context and expected outcomes.
+How to read this document
+Each scenario has a one-page explanation followed by the complete original workflow. All nodes and
+branches are retained; highlights show the prompt path. Diagram pages use an oversized vector canvas. Zoom
+in to read the labels.
+Scenarios and page guide
+PROMPT
+APPLIED BUSINESS TOOLS
+PAGES
+01 - Revive-order guidance
+How revive orders should be processed.
+None; explain retrieved procedure.
+2-3
+02 - USA customers
+Fetch all customers from USA.
+get_customers
+Apply the illustrative active-only rule.
+4-5
+03 - Customers and orders
+Fetch customers and their order details; apply
+appropriate rules.
+get_customers, then get_orders
+(orders tool is proposed).
+6-7
+Highlight legend
+Yellow - boxes used by the prompt
+Orange - actual business tool execution
+Green - Start / Resume
+Red - Interrupt / End
+Other boxes stay visible for context. A highlighted memory search does not mean every memory type has a match. Initial, result
+and decline agent boxes are views of the same logical agentModel, called when needed.
+Memory scope and shared services
+Semantic: organizationId + sessionId. A new session excludes old Semantic context; it does not require physical
+deletion. Procedural and Episodic: organizationId. threadId: identifies checkpoint/resume state. employeeId /
+userId: request metadata; business data remains organization-scoped.
+Every scenario uses the /chat API, graph state, PostgreSQL memory search and the checkpointer. recordEpisode summarizes
+and saves the outcome. These internal storage operations are separate from business tools.
+Design status
+These charts describe the agreed target design. The inspected branch currently has get_customers, create_customer and
+server_time. It still needs session scope, the merged prompt/intent call, batch Semantic review, an active/status customer filter,
+and an orders tool. The current eight-planning-turn cap can also limit large paginated fetches.
+Memory examples below are illustrative, not confirmed stored records. None of these three prompts requests a business write; the
+write-review, Semantic-save and resume branches remain visible but inactive.

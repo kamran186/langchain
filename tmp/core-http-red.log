@@ -1,0 +1,112 @@
+
+ RUN  v3.2.7 /Users/kamran186/Documents/dev/learning/langGraph
+
+ ❯ tests/batch-api.test.ts (6 tests | 5 failed) 84ms
+   × session and memory batch HTTP contracts > requires sessionId, echoes it and rejects cross-session continuation or resume 57ms
+     → expected 400 to be 409 // Object.is equality
+   ✓ session and memory batch HTTP contracts > rejects a legacy checkpoint with organization but no session 5ms
+   × session and memory batch HTTP contracts > rejects bad decisions without consuming the pending interrupt, then accepts a valid batch and retry 11ms
+     → expected 400 to be 409 // Object.is equality
+   × session and memory batch HTTP contracts > detects stale target data before any new fact is saved 8ms
+     → expected 400 to be 409 // Object.is equality
+   × session and memory batch HTTP contracts > persists a Procedural batch edit, retains other approvals and saves once after a simulated app restart 2ms
+     → expected 400 to be 202 // Object.is equality
+   × session and memory batch HTTP contracts > keeps a partial Procedural review pending and rejects cross-org approval 1ms
+     → Cannot read properties of undefined (reading 'reviewId')
+
+⎯⎯⎯⎯⎯⎯⎯ Failed Tests 5 ⎯⎯⎯⎯⎯⎯⎯
+
+ FAIL  tests/batch-api.test.ts > session and memory batch HTTP contracts > requires sessionId, echoes it and rejects cross-session continuation or resume
+AssertionError: expected 400 to be 409 // Object.is equality
+
+- Expected
++ Received
+
+- 409
++ 400
+
+ ❯ tests/batch-api.test.ts:39:99
+     37|     expect((await request(app).post("/chat").send({ ...other, threadId…
+     38|     expect((await request(app).post(`/chat/${start.body.threadId}/resu…
+     39|       reviewId: start.body.review.reviewId, decisions: [decide(start.b…
+       |                                                                                                   ^
+     40|     const fresh = await request(app).post("/chat").send({ ...other, pr…
+     41|     expect(fresh.status).toBe(200); expect(fresh.body.threadId).not.to…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/5]⎯
+
+ FAIL  tests/batch-api.test.ts > session and memory batch HTTP contracts > rejects bad decisions without consuming the pending interrupt, then accepts a valid batch and retry
+AssertionError: expected 400 to be 409 // Object.is equality
+
+- Expected
++ Received
+
+- 409
++ 400
+
+ ❯ tests/batch-api.test.ts:62:137
+     60|       { reviewId: review.reviewId, decisions: [decide(review, 0, "upda…
+     61|     ]) expect((await request(app).post(url).send({ ...context, ...body…
+     62|     expect((await request(app).post(url).send({ ...context, reviewId: …
+       |                                                                                                                                         ^
+     63|     expect(memory.semantic).toEqual([]);
+     64|     const body = { ...context, reviewId: review.reviewId, decisions: […
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[2/5]⎯
+
+ FAIL  tests/batch-api.test.ts > session and memory batch HTTP contracts > detects stale target data before any new fact is saved
+AssertionError: expected 400 to be 409 // Object.is equality
+
+- Expected
++ Received
+
+- 409
++ 400
+
+ ❯ tests/batch-api.test.ts:79:25
+     77|     const done = await request(app).post(`/chat/${start.body.threadId}…
+     78|       decisions: [decide(review, 0, "create"), decide(review, 1, "upda…
+     79|     expect(done.status).toBe(409);
+       |                         ^
+     80|     expect(memory.semantic).toEqual([{ id: "old-1", text: "Changed by …
+     81|   });
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[3/5]⎯
+
+ FAIL  tests/batch-api.test.ts > session and memory batch HTTP contracts > persists a Procedural batch edit, retains other approvals and saves once after a simulated app restart
+AssertionError: expected 400 to be 202 // Object.is equality
+
+- Expected
++ Received
+
+- 202
++ 400
+
+ ❯ tests/batch-api.test.ts:86:26
+     84|     const { app, memory, graph } = setup();
+     85|     const first = await request(app).post("/memory").send({ ...context…
+     86|     expect(first.status).toBe(202); const review: Review = first.body.…
+       |                          ^
+     87|     const edited = await request(app).post("/memory/approve").send({ .…
+     88|       reviewId: review.reviewId, decisions: [decide(review, 0, "approv…
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[4/5]⎯
+
+ FAIL  tests/batch-api.test.ts > session and memory batch HTTP contracts > keeps a partial Procedural review pending and rejects cross-org approval
+TypeError: Cannot read properties of undefined (reading 'reviewId')
+ ❯ tests/batch-api.test.ts:105:95
+    103|     const { app, memory } = setup();
+    104|     const first = await request(app).post("/memory").send({ ...context…
+    105|     const base = { ...context, proposalId: first.body.proposalId, revi…
+       |                                                                                               ^
+    106|     expect((await request(app).post("/memory/approve").send({ ...base,…
+    107|     const partial = await request(app).post("/memory/approve").send({ …
+
+⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[5/5]⎯
+
+
+ Test Files  1 failed (1)
+      Tests  5 failed | 1 passed (6)
+   Start at  12:34:14
+   Duration  1.07s (transform 124ms, setup 0ms, collect 710ms, tests 84ms, environment 0ms, prepare 63ms)
+

@@ -1,0 +1,115 @@
+/CHAT WORKFLOW | FULL DIAGRAM 02
+USA customers with an active-only rule
+Prompt: Fetch all customers from USA.
+get_customers reads every matching page. The active/status filter is a required addition.
+Prompt path Actual business tool executionStart / Resume Interrupt / End
+Semantic Memory addition
+After write decline
+After tool execution
+Initial planning
+Node: loadRelevantMemories - three independent searches
+Node: applyApprovedSemanticBatch - internal processing
+New
+Three independently scoped queries
+Semantic results
+ Procedural results
+ Episodic results
+Yes
+No: semantic = []
+Yes
+No: procedural = []
+Yes
+No: episodic = []
+Task / question
+Available registered capabilities
+Memory remains in graph state
+ Authorized names and descriptions
+Actual schemas
+Selected tool names
+Rebuild input with updated results
+Output: response + calls list
+Output: response + calls list
+Output: response + calls list
+Yes: one or more calls
+Read
+ Write / mixed calls
+Arguments + request context
+ Complete frozen proposal
+Approved arguments + request context
+Returned rows / write results
+No: calls = []
+Add new
+ Update existing
+ Skip
+Yes: next submitted decision
+Edited text: affected facts only
+Missing decisions: remaining IDs
+All IDs decided
+No
+Save Semantic Memory
+Save Procedural Memory
+Resume
+Tool-write review
+ Semantic batch review
+Approve matching proposalId
+Decline
+Checkpointing covers graph execution
+Restore matching session and thread state
+Node: polishSemanticBatchPrepare all facts togetherAssign stable candidateIds and item versionsEdits: reprocess affected factsPreserve unchanged decisions
+Node: checkSemanticToolScopeCheck implied operations against registered toolsIdentify limitations and eligible preferences
+Node: searchSimilarSemanticBatchSearch all pending facts togetherScope: organizationId + sessionIdReturn matching memoryIds per candidateId or empty lists
+Node: buildSemanticReviewListCombine proposed facts and existing matchescandidateId + exact proposed text + matching memoryIdsExact create/update choices + item versionsInclude limitations and eligible preference options
+Interrupt: Semantic Memory reviewShow the complete combined listPer candidateId:Add new / Update selected memoryIds / SkipOr edit the proposed text
+Node: validateSemanticDecisionsValidate reviewId, IDs, versions, text and targetsCollect decisions for the entire batchRetain unchanged approvals and skips
+Review batch ready?
+Node: composeSemanticOutcomeSummarize saved, updated, skipped or failed itemsReturn outcomes for every candidateId
+Action for next decided candidateId?
+Add new Semantic MemoryExact approved text + stable retry keyScope: organizationId + sessionId
+Update existing Semantic MemoryOnly selected memoryIds in the same scopeUse the exact approved text
+Skip candidateNo memory write
+Collect per-ID outcomecandidateId + action + status + memoryIds
+More IDs in the approved batch?
+Set writeDeclined = trueKeep declined write unexecuted
+Assemble agent input after declineprompt + current-session historytools: existing selected tool definitionssemantic: current-session facts or empty listprocedural: matching rules or empty listepisodic: verified hints or empty listresults: previous tool results or empty listwriteDeclined: true
+Node: agentModel - LLMRespect the declined writeDecide final answer or another permitted actionDo not re-propose the same declined write
+Append actual tool results to graph stateEach result: id + name + resultAvoid repeating unchanged completed reads
+Assemble agent input with resultsprompt + current-session historytools: existing selected tool definitionssemantic: current-session facts or empty listprocedural: matching rules or empty listepisodic: verified hints or empty listresults: updated actual tool resultswriteDeclined: current value
+Node: agentModel - LLMRead actual tool resultsDecide final answer or further tool callsTreat empty tool results as valid information
+Registry lookupResolve selected names into actual tool definitionsOutput: name + description + input schema + effect
+Assemble initial agent inputprompt + current-session historytools: selected tool definitionssemantic: current-session facts or empty listprocedural: matching rules or empty listepisodic: verified hints or empty listresults: []writeDeclined: false
+Node: agentModel - LLMRead initial assembled inputDecide initial answer or first tool calls
+Input: organizationId + sessionId + polishedPromptSearch Semantic, Procedural and Episodic Memory in parallel
+PostgreSQL Memory StoreSemantic: organizationId + sessionIdProcedural and Episodic: organizationId
+Relevant Semantic Memory found? Relevant Procedural Memory found? Relevant Episodic Memory found?
+semantic = matching facts / preferencesOnly from the current session procedural = matching instructions / rules
+episodic = matching past episodesAdvisory steps and outcomesVerify against the current requestDo not restore prior-session Semantic facts
+Wait for all three searchesSave each result list in graph stateAny combination can contain memories
+Start
+Request bodyorganizationId + employeeId + userId + sessionIdNew request: prompt + threadId when continuingResume: threadId + reviewId / proposalId + decisions
+API serviceParse requestCheck thread organization and session scopeLoad matching checkpointNew session: isolate previous history and Semantic context
+New request ya resume?
+LangGraph startsState: request context + sessionId + threadIdprompt + current-session history
+Node: preparePromptAndIntent - ONE LLM callInput: prompt + current-session contextOutput: polishedPrompt + intent
+Intent?
+Tool registryAuthorized tool names + descriptionsSchemas + effects + registered handlers
+Node: selectRelevantTools - LLMInput: polishedPrompt + authorized tool descriptionsOutput: selected tool names
+Are there tool calls?
+Node: authorizeToolCallsCheck selected names, access and input schemasResolve effects using registry metadata
+Read or write?
+Node: executeRegisteredToolsValidate read argumentsDispatch registered handlers by name
+Node: prepareWriteProposalFetch write schemas and required inputsGather inputs using registered read toolsPreview all targets, fields, values and effectsValidate and freeze every write call
+Interrupt: await tool-write approvalproposalId + exact calls + complete previews
+Execute frozen approved callsDispatch every approved callUse a stable retry key for each batch entry
+Local PostgreSQL / registered tool backendOrganization-scoped queries or approved writes
+Node: composeTaskResponseUse agent response after calls are completePreserve original structured tool results
+Node: recordEpisodeInput: prompt + performed steps + resolved ambiguity + outcomeLLM summarizes and saves Episodic MemoryStore request metadata and source sessionId
+Response: use /memory APISubmit all Procedural rules as one batchReview all rule IDs together: approve / deny / edit
+Pending resultstatus: approval_requiredsessionId + threadId + reviewreviewId / proposalIdSemantic review includes the combined candidate listGraph remains paused
+Resume LangGraph from saved checkpointSame organizationId + sessionId + threadId
+Which review is pending?
+Tool-write decision?
+Postgres CheckpointerAutomatic persistence after graph superstepsRequest IDs + sessionId + threadId + session historyCandidate batch + matches + versions + decisionsTool results + pending review + frozen proposal
+Completed resultstatus: completedsessionId + threadId + responseStructured tool results or per-ID memory outcomes
+API responseHTTP 200: completed resultHTTP 202: pending review
+End - current HTTP request
+Complete original workflow retained. Highlighted boxes identify this scenario. Oversized vector page - zoom to read.

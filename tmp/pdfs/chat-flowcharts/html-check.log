@@ -1,0 +1,35 @@
+{
+  "offline": true,
+  "charts": [
+    {
+      "chart": 1,
+      "nodes": 60,
+      "edges": 78,
+      "fit": true,
+      "originalSize": true,
+      "zoom": true
+    },
+    {
+      "chart": 2,
+      "nodes": 60,
+      "edges": 78,
+      "fit": true,
+      "originalSize": true,
+      "zoom": true
+    },
+    {
+      "chart": 3,
+      "nodes": 60,
+      "edges": 78,
+      "fit": true,
+      "originalSize": true,
+      "zoom": true
+    }
+  ],
+  "uniqueIds": true,
+  "sourceMatches": true,
+  "sourceDownload": true,
+  "mobileWidth": 390,
+  "errors": [],
+  "externalRequests": 0
+}
