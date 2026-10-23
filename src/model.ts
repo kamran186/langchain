@@ -4,7 +4,7 @@ import { config } from "./config.js";
 
 const model = new ChatBedrockConverse({
   model: config.model,
-  bedrockApiKey: config.apiKey,
+  bedrockBearerToken: config.apiKey,
   region: config.region,
   maxRetries: 2,
 });
