@@ -1,12 +1,19 @@
-import { InMemoryStore, MemorySaver } from "@langchain/langgraph";
+import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
+import { PostgresStore } from "@langchain/langgraph-checkpoint-postgres/store";
 
+import { config } from "../config.js";
 import {
   sessionKey,
   type RequestContext,
 } from "./interpretation.js";
 
-export const checkpointer = new MemorySaver();
-export const memoryStore = new InMemoryStore();
+export const checkpointer = PostgresSaver.fromConnString(
+  config.databaseUrl,
+);
+
+export const memoryStore = PostgresStore.fromConnString(
+  config.databaseUrl,
+);
 
 export type Episode = {
   id: string;
@@ -16,6 +23,24 @@ export type Episode = {
   createdAt: string;
 };
 
+// Called once during application startup.
+// Creates the required tables and applies adapter migrations.
+export async function initializeMemory(): Promise<void> {
+  await checkpointer.setup();
+  await memoryStore.setup();
+}
+
+let closing: Promise<void> | undefined;
+
+export function closeMemory(): Promise<void> {
+  closing ??= Promise.all([
+    checkpointer.end(),
+    memoryStore.stop(),
+  ]).then(() => undefined);
+
+  return closing;
+}
+
 function namespace(context: RequestContext): string[] {
   return ["episodes", sessionKey(context)];
 }
@@ -23,7 +48,11 @@ function namespace(context: RequestContext): string[] {
 export async function loadEpisodes(
   context: RequestContext,
 ): Promise<Episode[]> {
-  const item = await memoryStore.get(namespace(context), "recent");
+  const item = await memoryStore.get(
+    namespace(context),
+    "recent",
+  );
+
   return (item?.value.episodes ?? []) as Episode[];
 }
 
@@ -31,7 +60,8 @@ export async function saveEpisode(
   context: RequestContext,
   episode: Episode,
 ): Promise<void> {
-  // The conversation service already serializes requests per session.
+  // Existing conversation service serializes requests per session
+  // within this application process.
   const existing = await loadEpisodes(context);
 
   const episodes = [
