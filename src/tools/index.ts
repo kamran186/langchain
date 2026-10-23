@@ -2,6 +2,7 @@ import type { StructuredToolInterface } from "@langchain/core/tools";
 
 import { add, divide, multiply } from "./arithmetic.js";
 import { getCustomer } from "./customer.js";
+import { console } from "./dummytool.js";
 
 // Both model binding and execution use this single list.
 // Import each new tool from its own file and add it here.
@@ -10,6 +11,7 @@ export const availableTools: StructuredToolInterface[] = [
   multiply,
   divide,
   getCustomer,
+  console
 ];
 
 export const toolsByName = new Map<string, StructuredToolInterface>();

@@ -1,0 +1,14 @@
+[
+  {
+    "id": "CUST-001",
+    "name": "Avery Morgan",
+    "email": "avery@example.com",
+    "status": "active"
+  },
+  {
+    "id": "CUST-002",
+    "name": "Jordan Taylor",
+    "email": "jordan@example.com",
+    "status": "inactive"
+  }
+]

@@ -1,17 +1,10 @@
 import { z } from "zod";
 
-const historyMessageSchema = z
-  .object({
-    role: z.enum(["user", "assistant"]),
-    content: z.string().trim().min(1).max(8000),
-  })
-  .strict();
+import { RequestContextSchema } from "../graph/interpretation.js";
 
-export const conversationAskSchema = z
-  .object({
-    query: z.string().trim().min(1).max(8000),
-    history: z.array(historyMessageSchema).max(40).default([]),
-  })
-  .strict();
+export const conversationAskSchema = RequestContextSchema.extend({
+  message: z.string().trim().min(1).max(8000),
+}).strict();
 
-export type ConversationAskInput = z.infer<typeof conversationAskSchema>;
+export type ConversationAskInput =
+  z.infer<typeof conversationAskSchema>;

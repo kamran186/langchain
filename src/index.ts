@@ -1,28 +1,27 @@
-import { AIMessage, HumanMessage } from "@langchain/core/messages";
-
-import { agent } from "./graph/graph.js";
+import { conversationAskSchema } from "./api/conversation.schema.js";
+import { askConversation } from "./api/conversation.service.js";
 
 async function main() {
-  const question =
-    process.argv.slice(2).join(" ").trim() || "What can you help me with?";
+  const [
+    organizationId,
+    threadId,
+    employeeId,
+    ...words
+  ] = process.argv.slice(2);
 
-  const result = await agent.invoke(
-    { messages: [new HumanMessage(question)] },
-    { recursionLimit: 20 },
-  );
+  const input = conversationAskSchema.parse({
+    organizationId,
+    threadId,
+    employeeId,
+    message: words.join(" "),
+  });
 
-  for (const message of result.messages) {
-    if (AIMessage.isInstance(message) && message.tool_calls?.length) {
-      console.log("[tool requests]", JSON.stringify(message.tool_calls));
-    } else {
-      console.log(`[${message.type}] ${message.text}`);
-    }
-  }
-
-  console.log(`Model calls: ${result.llmCalls}`);
+  console.log(JSON.stringify(await askConversation(input), null, 2));
 }
 
 main().catch((error: unknown) => {
-  console.error(error instanceof Error ? error.message : String(error));
+  console.error(
+    error instanceof Error ? error.message : String(error),
+  );
   process.exitCode = 1;
 });
