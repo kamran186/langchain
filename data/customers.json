@@ -3,12 +3,108 @@
     "id": "CUST-001",
     "name": "Avery Morgan",
     "email": "avery@example.com",
+    "bfdkn_city": "Islamabad",
+    "mfbzdfkj_city": "Karachi",
+    "sdfnks_city": "Lahore",
     "status": "active"
   },
   {
     "id": "CUST-002",
     "name": "Jordan Taylor",
     "email": "jordan@example.com",
+    "bfdkn_city": "Karachi",
+    "mfbzdfkj_city": "Lahore",
+    "sdfnks_city": "Islamabad",
+    "status": "inactive"
+  },
+  {
+    "id": "CUST-003",
+    "name": "Oliver Bennett",
+    "email": "oliver@example.com",
+    "bfdkn_city": "Lahore",
+    "mfbzdfkj_city": "Islamabad",
+    "sdfnks_city": "Karachi",
+    "status": "active"
+  },
+  {
+    "id": "CUST-004",
+    "name": "Sophia Williams",
+    "email": "sophia@example.com",
+    "bfdkn_city": "Rawalpindi",
+    "mfbzdfkj_city": "Karachi",
+    "sdfnks_city": "Multan",
+    "status": "inactive"
+  },
+  {
+    "id": "CUST-005",
+    "name": "Noah Anderson",
+    "email": "noah@example.com",
+    "bfdkn_city": "Faisalabad",
+    "mfbzdfkj_city": "Lahore",
+    "sdfnks_city": "Islamabad",
+    "status": "active"
+  },
+  {
+    "id": "CUST-006",
+    "name": "Emma Thompson",
+    "email": "emma@example.com",
+    "bfdkn_city": "Multan",
+    "mfbzdfkj_city": "Peshawar",
+    "sdfnks_city": "Karachi",
+    "status": "active"
+  },
+  {
+    "id": "CUST-007",
+    "name": "Liam Harris",
+    "email": "liam@example.com",
+    "bfdkn_city": "Peshawar",
+    "mfbzdfkj_city": "Quetta",
+    "sdfnks_city": "Lahore",
+    "status": "inactive"
+  },
+  {
+    "id": "CUST-008",
+    "name": "Isabella Clark",
+    "email": "isabella@example.com",
+    "bfdkn_city": "Hyderabad",
+    "mfbzdfkj_city": "Islamabad",
+    "sdfnks_city": "Faisalabad",
+    "status": "active"
+  },
+  {
+    "id": "CUST-009",
+    "name": "Ethan Walker",
+    "email": "ethan@example.com",
+    "bfdkn_city": "Quetta",
+    "mfbzdfkj_city": "Multan",
+    "sdfnks_city": "Rawalpindi",
+    "status": "inactive"
+  },
+  {
+    "id": "CUST-010",
+    "name": "Mia Robinson",
+    "email": "mia@example.com",
+    "bfdkn_city": "Sialkot",
+    "mfbzdfkj_city": "Karachi",
+    "sdfnks_city": "Peshawar",
+    "status": "active"
+  },
+  {
+    "id": "CUST-011",
+    "name": "Lucas Mitchell",
+    "email": "lucas@example.com",
+    "bfdkn_city": "Gujranwala",
+    "mfbzdfkj_city": "Lahore",
+    "sdfnks_city": "Hyderabad",
+    "status": "active"
+  },
+  {
+    "id": "CUST-012",
+    "name": "Amelia Scott",
+    "email": "amelia@example.com",
+    "bfdkn_city": "Bahawalpur",
+    "mfbzdfkj_city": "Islamabad",
+    "sdfnks_city": "Sialkot",
     "status": "inactive"
   }
 ]

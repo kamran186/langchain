@@ -6,6 +6,9 @@ const CustomerSchema = z.object({
   id: z.string().trim().min(1),
   name: z.string().trim().min(1),
   email: z.string().trim().min(1),
+  bfdkn_city: z.string().trim().min(1).optional(),
+  sdfnks_city: z.string().trim().min(1).optional(),
+  mfbzdfkj_city: z.string().trim().min(1).optional(),
   status: z.enum(["active", "inactive"]),
 }).passthrough();
 
@@ -23,6 +26,9 @@ const CustomerSearchSchema = z.object({
   customerIds: z.array(z.string().trim().min(1)).min(1).optional(),
   name: z.string().trim().min(1).optional(),
   email: z.string().trim().min(1).optional(),
+  bfdkn_city: z.string().trim().min(1).optional(),
+  sdfnks_city: z.string().trim().min(1).optional(),
+  mfbzdfkj_city: z.string().trim().min(1).optional(),
   status: z.string().trim().min(1).optional(),
   limit: z.number().int().positive().optional(),
 }).strict();
