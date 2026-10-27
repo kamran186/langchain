@@ -1,25 +1,38 @@
-import type { StructuredToolInterface } from "@langchain/core/tools";
+import type {
+  StructuredToolInterface,
+} from "@langchain/core/tools";
 
 import { add, divide, multiply } from "./arithmetic.js";
 import { getCustomer } from "./customer.js";
-import { console } from "./dummytool.js";
+import { console as consoleTool } from "./dummytool.js";
 
-// Both model binding and execution use this single list.
-// Import each new tool from its own file and add it here.
+import {
+  getSessionConversation,
+} from "./session-history.js";
+
 export const availableTools: StructuredToolInterface[] = [
   add,
   multiply,
   divide,
   getCustomer,
-  console
+  consoleTool,
+  getSessionConversation,
 ];
 
-export const toolsByName = new Map<string, StructuredToolInterface>();
+export const toolsByName = new Map<
+  string,
+  StructuredToolInterface
+>();
 
 for (const registeredTool of availableTools) {
   if (toolsByName.has(registeredTool.name)) {
-    throw new Error(`Duplicate tool name: ${registeredTool.name}`);
+    throw new Error(
+      `Duplicate tool name: ${registeredTool.name}`,
+    );
   }
 
-  toolsByName.set(registeredTool.name, registeredTool);
+  toolsByName.set(
+    registeredTool.name,
+    registeredTool,
+  );
 }

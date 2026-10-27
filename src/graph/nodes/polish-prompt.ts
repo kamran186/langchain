@@ -78,7 +78,11 @@ const instructions = new SystemMessage([
 
   "MEMORY",
   "semanticMemory contains selected facts and current employee preferences.",
-  "episodicMemory contains historical organization interactions that may be incomplete, outdated, or incorrect.",
+  "episodicMemory contains selected conclusions of entire sessions within the organization.",
+  "Conclusions are historical interpretations and may omit details or lag newer conversation.",
+  "Each conclusion includes its source threadId.",
+  "Do not treat another session's personal preferences or employee identity as current.",
+  "Do not infer that a detail never existed merely because it is absent from a conclusion.",
   "proceduralMemory contains selected organization procedures, presentation rules, and references.",
   "Use relevant memories as context, not as new fact evidence.",
   "Never infer the current employee's identity from episodes, procedures, or other entities.",
@@ -201,9 +205,9 @@ export const polishPromptNode: GraphNode<
 
             ...(repair
               ? {
-                  previousInvalidOutput:
-                    previousOutput,
-                }
+                previousInvalidOutput:
+                  previousOutput,
+              }
               : {}),
           }),
         ),
@@ -302,9 +306,9 @@ export const polishPromptNode: GraphNode<
         issues:
           error instanceof z.ZodError
             ? error.issues.map((issue) => ({
-                path: issue.path.join("."),
-                code: issue.code,
-              }))
+              path: issue.path.join("."),
+              code: issue.code,
+            }))
             : undefined,
       },
     );
