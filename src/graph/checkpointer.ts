@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
 import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 import { PostgresStore } from "@langchain/langgraph-checkpoint-postgres/store";
-import { z } from "zod";
 
 import { config } from "../config.js";
+
 import {
   FactSchema,
   mergeFacts,
@@ -19,50 +19,22 @@ export const memoryStore = PostgresStore.fromConnString(
   config.databaseUrl,
 );
 
-const EPISODE_LIMIT = 5;
-
 const EMPLOYEE_PREFERENCE_KEYS = [
   "preferred_name",
   "mention_name_in_replies",
 ] as const;
 
-const EpisodeSchema = z.object({
-  id: z.string(),
-  prompt: z.string(),
-  steps: z.array(z.unknown()),
-  outcome: z.string(),
-  createdAt: z.string(),
-  employeeId: z.string().optional(),
-  threadId: z.string().optional(),
-}).strict();
-
-export type Episode = z.infer<typeof EpisodeSchema>;
-
-function scopeKey(parts: string[]): string {
-  return createHash("sha256")
-    .update(JSON.stringify(parts))
-    .digest("hex");
-}
-
-function episodeNamespace(
-  context: RequestContext,
-): string[] {
-  return [
-    "episodes-org-v1",
-    scopeKey([context.organizationId]),
-  ];
-}
-
 function employeeNamespace(
   context: RequestContext,
 ): string[] {
-  return [
-    "employee-profile-v1",
-    scopeKey([
+  const key = createHash("sha256")
+    .update(JSON.stringify([
       context.organizationId,
       context.employeeId,
-    ]),
-  ];
+    ]))
+    .digest("hex");
+
+  return ["employee-profile", key];
 }
 
 export function isEmployeePreference(
@@ -131,57 +103,4 @@ export async function saveEmployeePreferences(
       ),
     ),
   );
-}
-
-export async function loadEpisodes(
-  context: RequestContext,
-): Promise<Episode[]> {
-  const items = await memoryStore.search(
-    episodeNamespace(context),
-    {
-      limit: EPISODE_LIMIT,
-    },
-  );
-
-  return items.map((item) =>
-    EpisodeSchema.parse(item.value),
-  );
-}
-
-export async function saveEpisode(
-  context: RequestContext,
-  input: Episode,
-): Promise<void> {
-  const namespace = episodeNamespace(context);
-
-  const episode = EpisodeSchema.parse({
-    ...input,
-    employeeId: context.employeeId,
-    threadId: context.threadId,
-  });
-
-  await memoryStore.put(
-    namespace,
-    episode.id,
-    { ...episode },
-    false,
-  );
-
-  // Delete older records in batches without replacing a shared list.
-  while (true) {
-    const older = await memoryStore.search(namespace, {
-      offset: EPISODE_LIMIT,
-      limit: 100,
-    });
-
-    if (older.length === 0) {
-      break;
-    }
-
-    await Promise.all(
-      older.map((item) =>
-        memoryStore.delete(namespace, item.key),
-      ),
-    );
-  }
 }
