@@ -11,6 +11,15 @@ export const model = new ChatBedrockConverse({
   maxRetries: 2,
 });
 
+// Same model for now, with a bounded selection response.
+export const memoryFilterModel = new ChatBedrockConverse({
+  model: config.model,
+  region: config.region,
+  bedrockBearerToken: config.apiKey,
+  maxTokens: 2048,
+  maxRetries: 2,
+});
+
 export const modelWithTools = model.bindTools(availableTools);
 
 export function isUnusableResponse(

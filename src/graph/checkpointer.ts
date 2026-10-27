@@ -1,9 +1,13 @@
+import { createHash } from "node:crypto";
 import { PostgresSaver } from "@langchain/langgraph-checkpoint-postgres";
 import { PostgresStore } from "@langchain/langgraph-checkpoint-postgres/store";
+import { z } from "zod";
 
 import { config } from "../config.js";
 import {
-  sessionKey,
+  FactSchema,
+  mergeFacts,
+  type Fact,
   type RequestContext,
 } from "./interpretation.js";
 
@@ -15,16 +19,63 @@ export const memoryStore = PostgresStore.fromConnString(
   config.databaseUrl,
 );
 
-export type Episode = {
-  id: string;
-  prompt: string;
-  steps: unknown[];
-  outcome: string;
-  createdAt: string;
-};
+const EPISODE_LIMIT = 5;
 
-// Called once during application startup.
-// Creates the required tables and applies adapter migrations.
+const EMPLOYEE_PREFERENCE_KEYS = [
+  "preferred_name",
+  "mention_name_in_replies",
+] as const;
+
+const EpisodeSchema = z.object({
+  id: z.string(),
+  prompt: z.string(),
+  steps: z.array(z.unknown()),
+  outcome: z.string(),
+  createdAt: z.string(),
+  employeeId: z.string().optional(),
+  threadId: z.string().optional(),
+}).strict();
+
+export type Episode = z.infer<typeof EpisodeSchema>;
+
+function scopeKey(parts: string[]): string {
+  return createHash("sha256")
+    .update(JSON.stringify(parts))
+    .digest("hex");
+}
+
+function episodeNamespace(
+  context: RequestContext,
+): string[] {
+  return [
+    "episodes-org-v1",
+    scopeKey([context.organizationId]),
+  ];
+}
+
+function employeeNamespace(
+  context: RequestContext,
+): string[] {
+  return [
+    "employee-profile-v1",
+    scopeKey([
+      context.organizationId,
+      context.employeeId,
+    ]),
+  ];
+}
+
+export function isEmployeePreference(
+  fact: Pick<Fact, "subject" | "key">,
+): boolean {
+  return (
+    fact.subject === "self" &&
+    EMPLOYEE_PREFERENCE_KEYS.some(
+      (key) => key === fact.key,
+    )
+  );
+}
+
 export async function initializeMemory(): Promise<void> {
   await checkpointer.setup();
   await memoryStore.setup();
@@ -41,35 +92,96 @@ export function closeMemory(): Promise<void> {
   return closing;
 }
 
-function namespace(context: RequestContext): string[] {
-  return ["episodes", sessionKey(context)];
+export async function loadEmployeePreferences(
+  context: RequestContext,
+): Promise<Fact[]> {
+  const namespace = employeeNamespace(context);
+
+  const items = await Promise.all(
+    EMPLOYEE_PREFERENCE_KEYS.map((key) =>
+      memoryStore.get(namespace, key),
+    ),
+  );
+
+  return items.flatMap((item) =>
+    item ? [FactSchema.parse(item.value)] : [],
+  );
+}
+
+export async function saveEmployeePreferences(
+  context: RequestContext,
+  input: Fact[],
+): Promise<void> {
+  const preferences = mergeFacts(
+    [],
+    FactSchema.array()
+      .parse(input)
+      .filter(isEmployeePreference),
+  );
+
+  const namespace = employeeNamespace(context);
+
+  await Promise.all(
+    preferences.map((fact) =>
+      memoryStore.put(
+        namespace,
+        fact.key,
+        { ...fact },
+        false,
+      ),
+    ),
+  );
 }
 
 export async function loadEpisodes(
   context: RequestContext,
 ): Promise<Episode[]> {
-  const item = await memoryStore.get(
-    namespace(context),
-    "recent",
+  const items = await memoryStore.search(
+    episodeNamespace(context),
+    {
+      limit: EPISODE_LIMIT,
+    },
   );
 
-  return (item?.value.episodes ?? []) as Episode[];
+  return items.map((item) =>
+    EpisodeSchema.parse(item.value),
+  );
 }
 
 export async function saveEpisode(
   context: RequestContext,
-  episode: Episode,
+  input: Episode,
 ): Promise<void> {
-  // Existing conversation service serializes requests per session
-  // within this application process.
-  const existing = await loadEpisodes(context);
+  const namespace = episodeNamespace(context);
 
-  const episodes = [
-    episode,
-    ...existing.filter((item) => item.id !== episode.id),
-  ].slice(0, 5);
-
-  await memoryStore.put(namespace(context), "recent", {
-    episodes,
+  const episode = EpisodeSchema.parse({
+    ...input,
+    employeeId: context.employeeId,
+    threadId: context.threadId,
   });
+
+  await memoryStore.put(
+    namespace,
+    episode.id,
+    { ...episode },
+    false,
+  );
+
+  // Delete older records in batches without replacing a shared list.
+  while (true) {
+    const older = await memoryStore.search(namespace, {
+      offset: EPISODE_LIMIT,
+      limit: 100,
+    });
+
+    if (older.length === 0) {
+      break;
+    }
+
+    await Promise.all(
+      older.map((item) =>
+        memoryStore.delete(namespace, item.key),
+      ),
+    );
+  }
 }

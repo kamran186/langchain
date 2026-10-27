@@ -2,6 +2,7 @@ import { AIMessage } from "@langchain/core/messages";
 import type { GraphNode } from "@langchain/langgraph";
 
 import type { AgentState } from "../state.js";
+import { isEmployeePreference } from "../checkpointer.js";
 
 export const formatResponseNode: GraphNode<typeof AgentState> = (state) => {
   const last = state.messages.at(-1);
@@ -14,10 +15,10 @@ export const formatResponseNode: GraphNode<typeof AgentState> = (state) => {
   ) {
     throw new Error("A final assistant message with an ID is required.");
   }
-
+  
   const preferences = new Map(
-    state.semanticMemory
-      .filter((fact) => fact.subject === "self")
+    state.memoryMatches
+      .filter(isEmployeePreference)
       .map((fact) => [fact.key, fact.value]),
   );
 

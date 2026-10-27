@@ -1,12 +1,20 @@
-import express, { type ErrorRequestHandler } from "express";
+import express, {
+  type ErrorRequestHandler,
+} from "express";
 
 import { conversationRouter } from "./conversation.routes.js";
+import { proceduralMemoryRouter } from "./procedural-memory.routes.js";
 
 export const app = express();
 
 app.disable("x-powered-by");
 
 app.use("/conversation", conversationRouter);
+
+app.use(
+  "/memory/procedural",
+  proceduralMemoryRouter,
+);
 
 app.use((_req, res) => {
   res.status(404).json({
@@ -64,7 +72,7 @@ const errorHandler: ErrorRequestHandler = (
   }
 
   console.error(
-    "Conversation request failed:",
+    "API request failed:",
     error instanceof Error ? error.message : error,
   );
 

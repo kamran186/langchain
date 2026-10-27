@@ -8,7 +8,7 @@ import {
 function reportError(error: unknown): void {
   console.error(
     "API server failed:",
-    error instanceof Error ? error.message : String(error),
+    error,
   );
 
   process.exitCode = 1;
